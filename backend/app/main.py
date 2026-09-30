@@ -30,6 +30,9 @@ async def upload(file: UploadFile = File(...)):
     else:
         try: df = load_frame(path)
         except Exception as exc: raise HTTPException(422, f"Could not read file: {exc}") from exc
+        if df.empty:
+            path.unlink(missing_ok=True)
+            raise HTTPException(422, "Dataset contains no data rows")
         item = {"id": dataset_id, "name": file.filename, "source_type": suffix[1:].upper(), "path": str(path), "rows": len(df), "columns": len(df.columns), "profile": profile_frame(df), "status": "PROFILED", "quality_before": None, "quality_after": None, "preview": df.head(8).fillna("").to_dict(orient="records"), "uploaded_at": now()}
     DATASETS[dataset_id] = item
     return item
@@ -73,7 +76,7 @@ def pipeline(run_id: str):
 def run_logs(run_id: str):
     run = RUNS.get(run_id)
     if not run: raise HTTPException(404, "Pipeline run not found")
-    return LOGS
+    return run.get("logs", [])
 
 @app.get("/api/agents/logs")
 def logs(): return list(reversed(LOGS))

@@ -1,0 +1,59 @@
+.stage-active .stage-marker {
+  color: #d7f36b;
+  border-color: #d7f36b;
+  background: #d7f36b18;
+  box-shadow: 0 0 0 5px #d7f36b12;
+}
+
+.stage-active strong {
+  color: #d7f36b;
+}
+
+.stage-active > div:nth-child(2) > span {
+  color: #d7f36b;
+}
+
+.stage-passed .stage-marker {
+  color: #d7f36b;
+  border-color: #60734d;
+  background: #d7f36b14;
+}
+
+.stage-spinner {
+  animation: stage-spin 1s linear infinite;
+}
+
+.stage-active .stage-line::after {
+  animation: stage-travel 1.15s ease-in-out infinite;
+  background: #d7f36b;
+  content: "";
+  display: block;
+  height: 2px;
+  transform-origin: left;
+}
+
+@keyframes stage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes stage-travel {
+  0% {
+    transform: scaleX(0);
+  }
+  70% {
+    transform: scaleX(1);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-spinner,
+  .stage-active .stage-line::after {
+    animation-duration: 3s;
+    animation-iteration-count: 1;
+  }
+}
