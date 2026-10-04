@@ -70,8 +70,7 @@ def _add_log(state: DataPipelineState, agent: str, action: str, reason: str, too
 
 
 def _slow_stage(stage_name: str, minimum: float = 0.6, variance: float = 0.8) -> None:
-    jitter = 0.2 + (hash(stage_name) % 5) * 0.12
-    time.sleep(minimum + variance * 0.5 + jitter)
+    time.sleep(0.25)
 
 
 def source_analyzer_node(state: DataPipelineState) -> DataPipelineState:
