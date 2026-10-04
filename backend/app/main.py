@@ -105,11 +105,21 @@ def delete_dataset(dataset_id: str):
 
 @app.post("/api/pipelines/{dataset_id}/run")
 def run_pipeline(dataset_id: str, payload: RunPipelineRequest = None):
-    if dataset_id not in DATASETS: raise HTTPException(404, "Dataset not found")
+    print(f"--> [PIPELINE RUN] dataset_id={dataset_id}, payload={payload}", flush=True)
+    if dataset_id not in DATASETS:
+        print(f"--> [PIPELINE 404] {dataset_id} not in DATASETS (available: {list(DATASETS.keys())})", flush=True)
+        raise HTTPException(404, "Dataset not found")
     model_type = payload.model_type if payload else "generic"
     target_column = payload.target_column if payload else None
-    try: return execute_run(dataset_id, model_type=model_type, target_column=target_column)
-    except Exception as exc: raise HTTPException(422, f"Pipeline paused: {exc}") from exc
+    try:
+        result = execute_run(dataset_id, model_type=model_type, target_column=target_column)
+        print(f"--> [PIPELINE SUCCESS] run_id={result.get('id')}", flush=True)
+        return result
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        print(f"--> [PIPELINE ERROR] {exc}", flush=True)
+        raise HTTPException(422, f"Pipeline paused: {exc}") from exc
 
 @app.get("/api/pipelines/{run_id}")
 def pipeline(run_id: str):

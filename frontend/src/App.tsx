@@ -190,12 +190,15 @@ function App() {
       setSelected((await api.get(`/datasets/${selected.id}`)).data);
     } catch (err: any) {
       console.error("Pipeline run error:", err);
+      const status = err.response?.status ? `(HTTP ${err.response.status}) ` : "";
       const detail =
         err.response?.data?.detail ||
         err.response?.data?.message ||
-        err.message ||
-        "Pipeline execution paused or failed. Check logs for details.";
-      setError(`Pipeline Failed: ${detail}`);
+        (err.message === "Network Error"
+          ? "Network Error: Render backend dropped the connection or is rebuilding. Check the Render Logs tab."
+          : err.message) ||
+        "Pipeline execution paused or failed.";
+      setError(`Pipeline Failed: ${status}${detail}`);
     } finally {
       setPipelineRunning(false);
       setBusy(false);
