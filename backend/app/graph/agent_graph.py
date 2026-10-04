@@ -70,12 +70,11 @@ def _add_log(state: DataPipelineState, agent: str, action: str, reason: str, too
 
 
 def _slow_stage(stage_name: str, minimum: float = 0.6, variance: float = 0.8) -> None:
-    time.sleep(0.05)
+    pass
 
 
 def source_analyzer_node(state: DataPipelineState) -> DataPipelineState:
     print(f"--> [NODE 1: Source Analyzer] path={state.get('source_path')}", flush=True)
-    _slow_stage("Source Analyzer", 0.7, 0.9)
     frame = load_frame(state["source_path"])
     state["dataframe"] = frame
     state["rows"] = len(frame)
@@ -92,7 +91,6 @@ def source_analyzer_node(state: DataPipelineState) -> DataPipelineState:
 
 def profiler_node(state: DataPipelineState) -> DataPipelineState:
     print(f"--> [NODE 2: Profiler Agent]", flush=True)
-    _slow_stage("Profiler Agent", 0.8, 1.0)
     frame = state["dataframe"]
     state["profile"] = profile_frame(frame)
     state["before_quality"] = quality(frame)
@@ -108,7 +106,6 @@ def profiler_node(state: DataPipelineState) -> DataPipelineState:
 
 def planner_node(state: DataPipelineState) -> DataPipelineState:
     print(f"--> [NODE 3: Planner Agent]", flush=True)
-    _slow_stage("Planner Agent", 1.0, 1.2)
     model_type = state.get("model_type", "generic")
     target_col = state.get("target_column")
     state["plan"] = plan_with_llm(
@@ -134,13 +131,14 @@ def planner_node(state: DataPipelineState) -> DataPipelineState:
 
 
 def cleaning_node(state: DataPipelineState) -> DataPipelineState:
-    print(f"--> [NODE 4: Cleaning Agent] steps={len(state.get('plan', []))}", flush=True)
-    _slow_stage("Cleaning Agent", 0.9, 1.1)
+    total_steps = len(state.get("plan", []))
+    print(f"--> [NODE 4: Cleaning Agent] starting {total_steps} steps", flush=True)
     frame = state["dataframe"].copy()
     target_col = state.get("target_column")
 
-    for step in state["plan"]:
+    for i, step in enumerate(state.get("plan", [])):
         op = step["operation"]
+        print(f"--> [NODE 4: step {i+1}/{total_steps}: {op}]", flush=True)
         if op == "remove_empty_rows":
             before = len(frame)
             frame = remove_empty_rows(frame)
@@ -192,6 +190,7 @@ def cleaning_node(state: DataPipelineState) -> DataPipelineState:
             _add_log(state, "Validation Agent", op, step["reason"], "validate_dataframe", status="SUCCESS" if validation["validated"] else "WARNING", output=str(validation))
 
     state["dataframe"] = frame
+    print(f"--> [NODE 4: Cleaning Agent complete! rows={len(frame)}, cols={len(frame.columns)}]", flush=True)
     cleaning_summary = (
         f"The cleaning pass repaired the dataset by applying {len(state['plan'])} planned steps, including null repair, duplicate removal, "
         "type normalization, and schema cleanup. The final frame is now more stable for downstream feature engineering and model evaluation."
@@ -206,8 +205,7 @@ def cleaning_node(state: DataPipelineState) -> DataPipelineState:
 
 
 def transformation_node(state: DataPipelineState) -> DataPipelineState:
-    print(f"--> [NODE 5: Transformation Agent]", flush=True)
-    _slow_stage("Transformation Agent", 0.9, 1.0)
+    print(f"--> [NODE 5: Transformation Agent start]", flush=True)
     frame = state["dataframe"]
     state["after_quality"] = quality(frame)
     output_path = Path(PROCESSED_DIR) / f"{state['dataset_id']}.csv"
@@ -222,6 +220,7 @@ def transformation_node(state: DataPipelineState) -> DataPipelineState:
     state["stages"].append({"name": "Transformation", "status": "SUCCESS", "detail": "Prepared final transformed dataset"})
     state["stages"].append({"name": "Validation", "status": "SUCCESS", "detail": "Schema retained; deterministic quality checks completed"})
     state["stages"].append({"name": "Storage", "status": "SUCCESS", "detail": state["processed_path"]})
+    print(f"--> [NODE 5: Transformation Agent complete, saved to {state['processed_path']}]", flush=True)
     return state
 
 
@@ -245,13 +244,12 @@ def _infer_target_column(frame: Any, supplied_target: str | None = None) -> str 
 
 
 def benchmark_node(state: DataPipelineState) -> DataPipelineState:
-    print(f"--> [NODE 6: Benchmark Agent]", flush=True)
+    print(f"--> [NODE 6: Benchmark Agent start]", flush=True)
     model_type = state.get("model_type", "generic")
     target_col = _infer_target_column(state["dataframe"], state.get("target_column")) if state.get("dataframe") is not None else state.get("target_column")
     state["target_column"] = target_col
 
     if model_type and model_type != "generic" and target_col:
-        _slow_stage("Model Benchmark Agent", 1.1, 1.5)
         frame = state["dataframe"]
         benchmark = evaluate_downstream_model(frame, target_col=target_col, model_type=model_type)
         state["model_benchmark"] = benchmark
@@ -287,6 +285,7 @@ def benchmark_node(state: DataPipelineState) -> DataPipelineState:
             "status": "PENDING",
             "detail": "Skipped benchmark because no target model or target column was available",
         })
+    print(f"--> [NODE 6: Benchmark Agent complete]", flush=True)
     return state
 
 
