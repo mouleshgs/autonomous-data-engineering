@@ -566,7 +566,11 @@ def plan_with_llm(
         + parser.get_format_instructions()
     )
     try:
-        llm = ChatOllama(model=llm_model, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+        llm = ChatOllama(
+            model=llm_model,
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+            client_kwargs={"timeout": 2.0},
+        )
         response = llm.invoke([HumanMessage(content=prompt)])
         text = getattr(response, "content", str(response)).strip()
         parsed = parser.parse(text)
