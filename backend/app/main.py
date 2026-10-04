@@ -12,8 +12,17 @@ from pydantic import BaseModel
 
 from .core import DATASETS, LOGS, PROCESSED_DIR, RUNS, UPLOAD_DIR, execute_run, load_frame, now, profile_frame, schedule_run
 
+import os
+
 app = FastAPI(title="Autonomous Data Engineering Platform", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins if cors_origins != ["*"] else ["*"],
+    allow_credentials=True if cors_origins != ["*"] else False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class Query(BaseModel):
     question: str
@@ -74,6 +83,26 @@ def download_processed_dataset(dataset_id: str):
     path = Path(processed_path).resolve()
     if path.parent != PROCESSED_DIR.resolve() or not path.is_file(): raise HTTPException(404, "Processed dataset is not available")
     return FileResponse(path, media_type="text/csv", filename=f"{Path(item['name']).stem}_processed.csv")
+
+@app.delete("/api/datasets/{dataset_id}")
+def delete_dataset(dataset_id: str):
+    if dataset_id not in DATASETS:
+        raise HTTPException(404, "Dataset not found")
+    item = DATASETS.pop(dataset_id)
+    if item.get("path"):
+        try:
+            Path(item["path"]).unlink(missing_ok=True)
+        except Exception:
+            pass
+    if item.get("processed_path"):
+        try:
+            Path(item["processed_path"]).unlink(missing_ok=True)
+        except Exception:
+            pass
+    runs_to_remove = [rid for rid, r in RUNS.items() if r.get("dataset_id") == dataset_id]
+    for rid in runs_to_remove:
+        RUNS.pop(rid, None)
+    return {"status": "success", "deleted": dataset_id}
 
 @app.post("/api/pipelines/{dataset_id}/run")
 def run_pipeline(dataset_id: str, payload: RunPipelineRequest = None):

@@ -3,6 +3,7 @@ import "./pipeline.css";
 import axios from "axios";
 import {
   Activity,
+  AlertTriangle,
   ArrowUpRight,
   BarChart3,
   Bot,
@@ -18,7 +19,9 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Trash2,
   UploadCloud,
+  X,
   XCircle,
 } from "lucide-react";
 import {
@@ -83,13 +86,18 @@ function App() {
   const [modelType, setModelType] = useState<string>("generic");
   const [targetColumn, setTargetColumn] = useState<string>("");
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
-    const response = await api.get("/datasets");
-    setDatasets(response.data);
-    if (!selected && response.data[0]) setSelected(response.data[0]);
-    const logResponse = await api.get("/agents/logs");
-    setLogs(logResponse.data);
+    try {
+      const response = await api.get("/datasets");
+      setDatasets(response.data);
+      if (!selected && response.data[0]) setSelected(response.data[0]);
+      const logResponse = await api.get("/agents/logs");
+      setLogs(logResponse.data);
+    } catch (err: any) {
+      console.error("Refresh error:", err);
+    }
   };
   useEffect(() => {
     refresh().catch(() => undefined);
@@ -117,27 +125,68 @@ function App() {
     }, 650);
     return () => window.clearInterval(timer);
   }, [pipelineRunning]);
+
+  const deleteDataset = async (datasetId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this dataset?")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.delete(`/datasets/${datasetId}`);
+      if (selected?.id === datasetId) {
+        setSelected(null);
+        setRun(null);
+      }
+      await refresh();
+    } catch (err: any) {
+      console.error("Delete error:", err);
+      const detail =
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        "Failed to delete dataset.";
+      setError(`Delete Failed: ${detail}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const upload = async (file: File) => {
     setBusy(true);
-    const body = new FormData();
-    body.append("file", file);
-    const response = await api.post("/datasets/upload", body);
-    setSelected(response.data);
-    await refresh();
-    setBusy(false);
+    setError(null);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await api.post("/datasets/upload", body);
+      setSelected(response.data);
+      await refresh();
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      const detail =
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        "Upload failed. Ensure backend is running and file is CSV, Excel, JSON, or PDF.";
+      setError(`Upload Failed: ${detail}`);
+    } finally {
+      setBusy(false);
+    }
   };
+
   const execute = async () => {
     if (!selected) return;
     setBusy(true);
     setPipelineRunning(true);
     setActiveStageIndex(0);
     setRun(null);
+    setError(null);
 
     try {
       const response = await api.post(`/pipelines/${selected.id}/run`, {
         model_type: modelType,
         target_column: modelType !== "generic" ? targetColumn : undefined,
       });
+
       const startedRun = response.data;
       setRun(startedRun);
 
@@ -157,14 +206,28 @@ function App() {
           window.setTimeout(() => {
             void pollRun();
           }, 1200);
-        } catch {
+        } catch (err: any) {
+          console.error("Pipeline poll error:", err);
           setPipelineRunning(false);
           setBusy(false);
+          const detail =
+            err.response?.data?.detail ||
+            err.response?.data?.message ||
+            err.message ||
+            "Pipeline status polling failed.";
+          setError(`Pipeline Failed: ${detail}`);
         }
       };
 
       await pollRun();
-    } catch {
+    } catch (err: any) {
+      console.error("Pipeline run error:", err);
+      const detail =
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        "Pipeline execution paused or failed. Check logs for details.";
+      setError(`Pipeline Failed: ${detail}`);
       setPipelineRunning(false);
       setBusy(false);
     }
@@ -263,6 +326,21 @@ function App() {
             </label>
           </div>
         </header>
+        {error && (
+          <div className="error-banner">
+            <div className="error-banner-content">
+              <AlertTriangle size={18} className="error-icon" />
+              <span>{error}</span>
+            </div>
+            <button
+              className="error-close-btn"
+              onClick={() => setError(null)}
+              title="Dismiss error"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
         {view === "overview" && (
           <>
             <section className="hero">
@@ -343,6 +421,7 @@ function App() {
                       dataset={d}
                       selected={selected?.id === d.id}
                       onClick={() => setSelected(d)}
+                      onDelete={deleteDataset}
                     />
                   ))
                 )}
@@ -435,6 +514,7 @@ function App() {
                 dataset={d}
                 selected={selected?.id === d.id}
                 onClick={() => setSelected(d)}
+                onDelete={deleteDataset}
               />
             ))}
           </section>
@@ -454,6 +534,7 @@ function App() {
             targetColumn={targetColumn}
             setTargetColumn={setTargetColumn}
             datasetColumns={datasetColumns}
+            deleteDataset={deleteDataset}
           />
         )}{" "}
         {view === "logs" && <Logs logs={logs} />}{" "}
@@ -484,11 +565,13 @@ function Metric({ label, value, icon: Icon, accent }: any) {
     </div>
   );
 }
-function DatasetRow({ dataset, selected, onClick }: any) {
+function DatasetRow({ dataset, selected, onClick, onDelete }: any) {
   return (
-    <button
+    <div
       className={selected ? "dataset-row selected" : "dataset-row"}
       onClick={onClick}
+      role="button"
+      tabIndex={0}
     >
       <div className="file-icon">
         <Database size={18} />
@@ -505,8 +588,17 @@ function DatasetRow({ dataset, selected, onClick }: any) {
       <span className={`status ${dataset.status === "READY" ? "good" : ""}`}>
         {dataset.status}
       </span>
+      {onDelete && (
+        <button
+          className="delete-dataset-btn"
+          onClick={(e) => onDelete(dataset.id, e)}
+          title="Delete dataset"
+        >
+          <Trash2 size={15} />
+        </button>
+      )}
       <ArrowUpRight size={15} />
-    </button>
+    </div>
   );
 }
 function Empty({ onUpload }: any) {
@@ -537,6 +629,7 @@ function Pipeline({
   targetColumn,
   setTargetColumn,
   datasetColumns,
+  deleteDataset,
 }: any) {
   const download = () => {
     if (!selected) return;
@@ -614,6 +707,16 @@ function Pipeline({
               ))
             )}
           </select>
+          {selected && (
+            <button
+              className="delete-dataset-btn"
+              onClick={(e) => deleteDataset(selected.id, e)}
+              title="Delete active dataset"
+              disabled={busy || pipelineRunning}
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
 
         <div className="pipeline-actions">
