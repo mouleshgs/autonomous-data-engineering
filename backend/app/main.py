@@ -31,6 +31,11 @@ class RunPipelineRequest(BaseModel):
     model_type: str = "generic"
     target_column: str | None = None
 
+@app.get("/")
+@app.head("/")
+def root():
+    return {"status": "ok", "service": "Autonomous Data Engineering Platform"}
+
 @app.get("/api/health")
 def health(): return {"status": "ok", "mode": "DEMO_MODE"}
 
