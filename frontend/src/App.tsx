@@ -190,6 +190,19 @@ function App() {
       const startedRun = response.data;
       setRun(startedRun);
 
+      if (startedRun.status === "SUCCESS") {
+        setPipelineRunning(false);
+        setBusy(false);
+        try {
+          await refresh();
+          const updated = await api.get(`/datasets/${selected.id}`);
+          setSelected(updated.data);
+        } catch (refreshErr) {
+          console.warn("Post-pipeline refresh warning:", refreshErr);
+        }
+        return;
+      }
+
       let retries = 0;
       const pollRun = async () => {
         try {

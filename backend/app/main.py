@@ -118,8 +118,8 @@ def run_pipeline(dataset_id: str, payload: RunPipelineRequest = None):
     model_type = payload.model_type if payload else "generic"
     target_column = payload.target_column if payload else None
     try:
-        run = schedule_run(dataset_id, model_type=model_type, target_column=target_column)
-        print(f"--> [PIPELINE SCHEDULED] run_id={run.get('id')}", flush=True)
+        run = execute_run(dataset_id, model_type=model_type, target_column=target_column)
+        print(f"--> [PIPELINE SUCCESS] run_id={run.get('id')}", flush=True)
         return run
     except Exception as exc:
         import traceback
