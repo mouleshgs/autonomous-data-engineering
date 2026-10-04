@@ -1,0 +1,11 @@
+order_id,product,region,quantity,price,order_date,channel
+D-2001,"  widget alpha  "," india ",2,15.50,2025-03-01," online "
+D-2002,WIDGET BETA,US,,21.00,"March 2 2025",RETAIL
+D-2003,widget gamma,europe,5,,2025/03/03,"Online "
+D-2004,Widget Delta,uk,-2,12.00,"March 4 2025",online
+D-2005," Widget Alpha",India,3,15.50,2025-03-05,Online
+D-2005," Widget Alpha",India,3,15.50,2025-03-05,Online
+D-2006,widget beta," us ",2,,"March 6 2025"," retail "
+D-2007,,India,1,8.25,2025-03-07,Mobile
+D-2008,Widget Epsilon,,4,18.75,2025-03-08,"MOBILE "
+D-2009,widget zeta,Europe,0,0,2025-03-09,WEB

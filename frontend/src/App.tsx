@@ -132,15 +132,39 @@ function App() {
     setPipelineRunning(true);
     setActiveStageIndex(0);
     setRun(null);
+
     try {
       const response = await api.post(`/pipelines/${selected.id}/run`, {
         model_type: modelType,
         target_column: modelType !== "generic" ? targetColumn : undefined,
       });
-      setRun(response.data);
-      await refresh();
-      setSelected((await api.get(`/datasets/${selected.id}`)).data);
-    } finally {
+      const startedRun = response.data;
+      setRun(startedRun);
+
+      const pollRun = async () => {
+        try {
+          const latest = await api.get(`/pipelines/${startedRun.id}`);
+          setRun(latest.data);
+
+          if (latest.data.status === "SUCCESS" || latest.data.status === "FAILED") {
+            setPipelineRunning(false);
+            setBusy(false);
+            await refresh();
+            setSelected((await api.get(`/datasets/${selected.id}`)).data);
+            return;
+          }
+
+          window.setTimeout(() => {
+            void pollRun();
+          }, 1200);
+        } catch {
+          setPipelineRunning(false);
+          setBusy(false);
+        }
+      };
+
+      await pollRun();
+    } catch {
       setPipelineRunning(false);
       setBusy(false);
     }
@@ -180,6 +204,7 @@ function App() {
             ["overview", "Overview", LayoutDashboard],
             ["datasets", "Datasets", Database],
             ["pipeline", "Pipeline Monitor", Activity],
+            ["benchmark", "Benchmark", Gauge],
             ["logs", "Agent Decisions", Bot],
             ["analytics", "Analytics", BarChart3],
           ].map(([key, label, Icon]: any) => (
@@ -432,6 +457,7 @@ function App() {
           />
         )}{" "}
         {view === "logs" && <Logs logs={logs} />}{" "}
+        {view === "benchmark" && <Benchmark run={run} selected={selected} />}
         {view === "analytics" && (
           <Analytics
             question={question}
@@ -521,6 +547,14 @@ function Pipeline({
     link.click();
     document.body.removeChild(link);
   };
+
+  const totalStages = stages.length;
+  const actualCompleted = run?.stages?.length ?? 0;
+  const progressPercent = pipelineRunning
+    ? ((Math.min(activeStageIndex + 1, totalStages) / totalStages) * 100)
+    : run
+      ? (Math.min(actualCompleted, totalStages) / totalStages) * 100
+      : 0;
 
   const getPolicySummary = (type: string) => {
     switch (type) {
@@ -660,6 +694,40 @@ function Pipeline({
           <div className="panel" style={{ padding: "18px 22px" }}>
             <span className="section-label">EXECUTION GRAPH</span>
             <h3 style={{ margin: "4px 0 0", fontSize: 15 }}>Autonomous Pipeline Stages</h3>
+
+            <div className="run-progress-panel">
+              <div className="progress-header">
+                <span>Pipeline progress</span>
+                <strong>{Math.round(progressPercent)}%</strong>
+              </div>
+              <div className="progress-track">
+                <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+              </div>
+              <div className="progress-meta">
+                <span>{pipelineRunning ? "Agents are active" : run ? "Finished" : "Waiting to start"}</span>
+                <span>{run?.status || "PENDING"}</span>
+              </div>
+            </div>
+
+            <div className="stage-timeline">
+              {stages.map((name: string, i: number) => {
+                const matchingStage = run?.stages?.find((stage: any) => {
+                  const stageName = String(stage.name || "").toLowerCase();
+                  return stageName === name.toLowerCase() || stageName.includes(name.split(" ")[0].toLowerCase());
+                });
+                const complete = Boolean(matchingStage);
+                const active = pipelineRunning && i === activeStageIndex;
+                const passed = pipelineRunning && i < activeStageIndex;
+                return (
+                  <div className={`timeline-node ${complete ? "done" : ""} ${active ? "active" : ""} ${passed ? "passed" : ""}`} key={name}>
+                    <span className="timeline-dot">
+                      {complete ? <CheckCircle2 size={12} /> : active ? <LoaderCircle className="stage-spinner" size={12} /> : <span>{i + 1}</span>}
+                    </span>
+                    <small>{name}</small>
+                  </div>
+                );
+              })}
+            </div>
 
             <div className="stage-grid">
               {stages.map((name: string, i: number) => {
@@ -811,6 +879,7 @@ function Logs({ logs }: any) {
             <div className="log-action">
               <strong>{log.action.replaceAll("_", " ")}</strong>
               <span>{log.reason}</span>
+              {log.output && <small style={{ display: "block", marginTop: 6, color: "#b9c9bb", lineHeight: 1.6 }}>{log.output}</small>}
             </div>
             <code>{log.tool}</code>
             <span className="status good">{log.status}</span>
@@ -820,6 +889,91 @@ function Logs({ logs }: any) {
     </section>
   );
 }
+function Benchmark({ run, selected }: any) {
+  const benchmark = run?.model_benchmark;
+
+  if (!benchmark) {
+    return (
+      <section className="panel full-panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-label">MODEL BENCHMARK</span>
+            <h3>No benchmark available yet</h3>
+          </div>
+        </div>
+        <p className="muted" style={{ padding: "12px 0 0" }}>
+          Run a pipeline with a model type and target column first to generate benchmark metrics.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel full-panel">
+      <div className="panel-head">
+        <div>
+          <span className="section-label">MODEL BENCHMARK</span>
+          <h3>{benchmark.model_name}</h3>
+        </div>
+        <span className="benchmark-pill">+{benchmark.lift}% RESEARCH LIFT</span>
+      </div>
+
+      <div className="benchmark-scores" style={{ marginTop: 16 }}>
+        <div className="benchmark-col">
+          <small>BASELINE SCORE</small>
+          <strong>{benchmark.baseline_score}%</strong>
+        </div>
+        <div className="benchmark-arrow">→</div>
+        <div className="benchmark-col highlight">
+          <small>MODEL-AWARE SCORE</small>
+          <strong>{benchmark.model_aware_score}%</strong>
+        </div>
+      </div>
+
+      <div className="work-grid" style={{ marginTop: 18 }}>
+        <div className="panel benchmark-card">
+          <div className="benchmark-meta">
+            <div><b>Dataset:</b> {selected?.name || "Current dataset"}</div>
+            <div><b>Target Column:</b> {benchmark.target_column}</div>
+            <div><b>Task:</b> {benchmark.task}</div>
+            <div><b>Metric:</b> {benchmark.metric_name}</div>
+            <div><b>Model Type:</b> {benchmark.model_type || "N/A"}</div>
+            <div><b>Strategy:</b> {benchmark.policy_description}</div>
+          </div>
+        </div>
+
+        <div className="panel benchmark-card">
+          <div className="benchmark-meta">
+            <div><b>Baseline:</b> {benchmark.baseline_score}%</div>
+            <div><b>Model-Aware:</b> {benchmark.model_aware_score}%</div>
+            <div><b>Lift:</b> +{benchmark.lift}%</div>
+            <div><b>Winner:</b> {benchmark.model_name}</div>
+            <div><b>Pipeline status:</b> {run?.status || "SUCCESS"}</div>
+            <div><b>Last evaluation:</b> {new Date().toLocaleString()}</div>
+          </div>
+        </div>
+      </div>
+
+      {Array.isArray(run?.plan) && run.plan.length > 0 && (
+        <div style={{ marginTop: 22 }}>
+          <span className="section-label">ADAPTIVE PLAN</span>
+          <div className="plan-card-scrollable" style={{ maxHeight: 220 }}>
+            {run.plan.map((p: any) => (
+              <div className="plan-step" key={p.operation}>
+                <CheckCircle2 size={15} />
+                <div>
+                  <strong>{p.operation.replaceAll("_", " ")}</strong>
+                  <span>{p.reason}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Analytics({ question, setQuestion, ask, answer, busy }: any) {
   return (
     <section className="analytics-view">
@@ -855,6 +1009,48 @@ function Analytics({ question, setQuestion, ask, answer, busy }: any) {
             <span className="section-label">{answer.route}</span>
             <h3>{answer.answer}</h3>
             {answer.sql && <pre>{answer.sql}</pre>}
+            {Array.isArray(answer.sources) && answer.sources.length > 0 && (
+              <div className="answer-evidence">
+                <strong>RAG context</strong>
+                <div className="evidence-table">
+                  {answer.sources.slice(0, 3).map((source: any, index: number) => (
+                    <div key={`${source.title || 'source'}-${index}`} className="evidence-row">
+                      <span><b>{source.title || 'Source'}:</b> {source.snippet || source.content || source.answer || ''}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {Array.isArray(answer.evidence) && answer.evidence.length > 0 && (
+              <div className="answer-evidence">
+                <strong>Evidence</strong>
+                <div className="evidence-table" style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
+                    <thead>
+                      <tr>
+                        {(answer.columns && answer.columns.length ? answer.columns : Object.keys(answer.evidence[0] || {})).map((column: string) => (
+                          <th key={column} style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #31463d", color: "#d7f36b" }}>{column}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {answer.evidence.slice(0, 10).map((row: any, index: number) => {
+                        const keys = answer.columns && answer.columns.length ? answer.columns : Object.keys(row || {});
+                        return (
+                          <tr key={`${JSON.stringify(row)}-${index}`}>
+                            {keys.map((key: string) => (
+                              <td key={`${key}-${index}`} style={{ padding: "8px 10px", borderBottom: "1px solid #1c2c26", verticalAlign: "top" }}>
+                                {String(row?.[key] ?? "") || "—"}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

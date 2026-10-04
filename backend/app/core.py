@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 DATASETS: dict[str, dict[str, Any]] = {}
 RUNS: dict[str, dict[str, Any]] = {}
 LOGS: list[dict[str, Any]] = []
+BACKGROUND_TASKS: dict[str, threading.Thread] = {}
 
 
 def now() -> str:
@@ -70,3 +72,45 @@ def execute_run(dataset_id: str, model_type: str = "generic", target_column: str
         LOGS.append(record)
     RUNS[run_id] = run
     return run
+
+
+def schedule_run(dataset_id: str, model_type: str = "generic", target_column: str | None = None) -> dict[str, Any]:
+    dataset = DATASETS[dataset_id]
+    run_id = str(uuid4())
+    initial_run = {
+        "id": run_id,
+        "dataset_id": dataset_id,
+        "dataset_name": dataset.get("name", "unknown"),
+        "status": "STARTED",
+        "started_at": now(),
+        "finished_at": None,
+        "before": {},
+        "after": {},
+        "plan": [],
+        "stages": [],
+        "logs": [],
+        "model_type": model_type,
+        "target_column": target_column,
+        "model_benchmark": None,
+    }
+    RUNS[run_id] = initial_run
+
+    def worker() -> None:
+        try:
+            final_run = execute_run(dataset_id, model_type=model_type, target_column=target_column)
+            final_run["id"] = run_id
+            if final_run.get("status") == "SUCCESS":
+                final_run["status"] = "SUCCESS"
+            RUNS[run_id] = final_run
+        except Exception as exc:  # pragma: no cover - background worker safeguard
+            RUNS[run_id] = {
+                **initial_run,
+                "status": "FAILED",
+                "error": str(exc),
+                "finished_at": now(),
+            }
+
+    thread = threading.Thread(target=worker, daemon=True)
+    BACKGROUND_TASKS[run_id] = thread
+    thread.start()
+    return initial_run

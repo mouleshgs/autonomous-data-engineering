@@ -1,0 +1,4 @@
+customer_id,name,region,segment
+C001,Acme India,India,Enterprise
+C002,Northwind,US,SMB
+C003,Globex,Europe,Enterprise
