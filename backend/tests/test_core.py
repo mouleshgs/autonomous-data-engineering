@@ -161,3 +161,28 @@ def test_execute_run_persists_graph_decisions(monkeypatch):
     assert run["logs"][0]["agent"] == "Planner Agent"
     assert core.LOGS[0]["run_id"] == run["id"]
     assert core.LOGS[0]["dataset_id"] == dataset_id
+
+
+def test_model_aware_pipeline_feature_engineering_and_benchmark(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_graph, "PROCESSED_DIR", tmp_path)
+    sample_path = Path(__file__).resolve().parents[2] / "testing-db" / "customer_orders_dirty.csv"
+    dataset = {
+        "name": "customer_orders_dirty.csv",
+        "source_type": "CSV",
+        "path": str(sample_path.resolve()),
+    }
+    run = agent_graph.run_langgraph_pipeline(
+        "model-aware-test",
+        dataset,
+        model_type="logistic_regression",
+        target_column="is_return",
+    )
+    assert run["status"] == "SUCCESS"
+    operations = {step["operation"] for step in run["plan"]}
+    assert "clip_outliers" in operations
+    assert "scale_features" in operations
+    assert "encode_categoricals" in operations
+    assert run["model_benchmark"] is not None
+    assert run["model_benchmark"]["model_type"] == "logistic_regression"
+    assert run["model_benchmark"]["lift"] > 0
+    assert any(stage["name"] == "Model Benchmark" for stage in run["stages"])

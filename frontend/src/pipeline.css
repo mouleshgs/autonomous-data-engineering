@@ -23,37 +23,443 @@
   animation: stage-spin 1s linear infinite;
 }
 
-.stage-active .stage-line::after {
-  animation: stage-travel 1.15s ease-in-out infinite;
-  background: #d7f36b;
-  content: "";
-  display: block;
-  height: 2px;
-  transform-origin: left;
-}
-
 @keyframes stage-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-@keyframes stage-travel {
-  0% {
-    transform: scaleX(0);
-  }
-  70% {
-    transform: scaleX(1);
-  }
-  100% {
-    transform: scaleX(1);
+@media (prefers-reduced-motion: reduce) {
+  .stage-spinner {
+    animation-duration: 3s;
+    animation-iteration-count: 1;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .stage-spinner,
-  .stage-active .stage-line::after {
-    animation-duration: 3s;
-    animation-iteration-count: 1;
+/* ========================================================
+   RE-ENGINEERED BALANCED PIPELINE LAYOUT
+   ======================================================== */
+
+.pipeline-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+/* 1. Full-Width Top Bar: Dataset Dropdown & Spacious Buttons */
+.pipeline-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  background: #132019;
+  border: 1px solid #2f4939;
+  border-radius: 8px;
+  padding: 16px 24px;
+  box-sizing: border-box;
+}
+
+.dataset-select-section {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dataset-select-label {
+  font: 11px 'DM Mono', monospace;
+  color: #8fa597;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dataset-select-dropdown {
+  flex: 1;
+  max-width: 540px;
+  background: #09120e;
+  border: 1px solid #3d5a47;
+  color: #d7f36b;
+  font: 600 13px Manrope, sans-serif;
+  padding: 10px 14px;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.dataset-select-dropdown:focus {
+  border-color: #d7f36b;
+}
+
+.pipeline-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.pipeline-actions .run-button {
+  white-space: nowrap;
+  padding: 11px 20px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.secondary-download-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1a2f23;
+  border: 1px solid #3d5f48;
+  color: #d7f36b;
+  font: 700 13px Manrope, sans-serif;
+  padding: 11px 18px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.secondary-download-btn:hover {
+  background: #233f2e;
+  border-color: #d7f36b;
+}
+
+/* 2. Symmetrical Balanced 2-Column Grid */
+.pipeline-columns-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.pipeline-column {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Model Configuration Card */
+.model-config-card {
+  background: #14211a;
+  border: 1px solid #2d4536;
+  border-radius: 8px;
+  padding: 18px 22px;
+}
+
+.model-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.model-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-field label {
+  font: 11px 'DM Mono', monospace;
+  color: #9ab3a3;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.model-select {
+  background: #0d1713;
+  border: 1px solid #3d5a47;
+  color: #e8eee8;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font: 500 13px Manrope, sans-serif;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.model-select:focus {
+  border-color: #d7f36b;
+}
+
+.model-policy-callout {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: #1b2f24;
+  border-left: 3px solid #d7f36b;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #b2c9ba;
+}
+
+.model-policy-callout strong {
+  color: #d7f36b;
+  display: block;
+  margin-bottom: 3px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+/* 3x3 Stage Grid (Unified and Symmetrical) */
+.stage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.stage-card {
+  background: #0f1914;
+  border: 1px solid #25392d;
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.2s ease;
+  min-height: 56px;
+}
+
+.stage-card.complete {
+  border-color: #4c6b54;
+  background: #14241b;
+}
+
+.stage-card.stage-active {
+  border-color: #d7f36b;
+  background: #1a2f23;
+  box-shadow: 0 0 0 1px #d7f36b33;
+}
+
+.stage-card-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid #435b4b;
+  display: grid;
+  place-items: center;
+  font: 10px 'DM Mono', monospace;
+  color: #8fa597;
+  flex-shrink: 0;
+  background: #09120e;
+}
+
+.stage-card.complete .stage-card-marker {
+  background: #d7f36b;
+  color: #0d1512;
+  border-color: #d7f36b;
+}
+
+.stage-card.stage-active .stage-card-marker {
+  color: #d7f36b;
+  border-color: #d7f36b;
+  background: #d7f36b18;
+}
+
+.stage-card-text {
+  min-width: 0;
+}
+
+.stage-card-text strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8eee8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stage-card.stage-active .stage-card-text strong {
+  color: #d7f36b;
+}
+
+.stage-card-text span {
+  display: block;
+  font: 9px 'DM Mono', monospace;
+  color: #7b8f82;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stage-card.complete .stage-card-text span {
+  color: #a4c2a4;
+}
+
+.stage-card.stage-active .stage-card-text span {
+  color: #d7f36b;
+}
+
+/* Research Benchmark Card */
+.benchmark-card {
+  background: linear-gradient(135deg, #182b21 0%, #112019 100%);
+  border: 1px solid #4a7556;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.benchmark-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.benchmark-pill {
+  background: #d7f36b;
+  color: #0e1a12;
+  font: 700 11px 'DM Mono', monospace;
+  padding: 4px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.04em;
+}
+
+.benchmark-scores {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  margin: 14px 0;
+  padding: 14px 18px;
+  background: #0c1611;
+  border-radius: 6px;
+  border: 1px solid #23372c;
+}
+
+.benchmark-col small {
+  display: block;
+  font: 10px 'DM Mono', monospace;
+  color: #82988b;
+  margin-bottom: 4px;
+}
+
+.benchmark-col strong {
+  font-size: 26px;
+  letter-spacing: -0.04em;
+  color: #e8eee8;
+}
+
+.benchmark-col.highlight strong {
+  color: #d7f36b;
+}
+
+.benchmark-arrow {
+  color: #82988b;
+  font-size: 20px;
+  text-align: center;
+}
+
+.benchmark-meta {
+  font-size: 11px;
+  color: #8fa597;
+  line-height: 1.6;
+}
+
+.benchmark-meta b {
+  color: #d7f36b;
+}
+
+/* Adaptive Plan Card - Clean Scrollable to Prevent Page Stretching */
+.plan-card-scrollable {
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 6px;
+  margin-top: 10px;
+}
+
+.plan-card-scrollable::-webkit-scrollbar {
+  width: 5px;
+}
+
+.plan-card-scrollable::-webkit-scrollbar-track {
+  background: #0d1611;
+  border-radius: 4px;
+}
+
+.plan-card-scrollable::-webkit-scrollbar-thumb {
+  background: #253d2e;
+  border-radius: 4px;
+}
+
+.plan-card-scrollable::-webkit-scrollbar-thumb:hover {
+  background: #d7f36b;
+}
+
+/* Standby Card when no run yet */
+.standby-card {
+  background: #142019;
+  border: 1px dashed #344d3d;
+  border-radius: 8px;
+  padding: 36px 28px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 380px;
+}
+
+.standby-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #1c3024;
+  border: 1px solid #3e6047;
+  display: grid;
+  place-items: center;
+  color: #d7f36b;
+}
+
+.standby-card h3 {
+  font-size: 17px;
+  color: #e8eee8;
+  margin: 0;
+}
+
+.standby-card p {
+  font-size: 12px;
+  color: #8b9e91;
+  max-width: 380px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.standby-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.standby-badge {
+  font: 10px 'DM Mono', monospace;
+  background: #0f1813;
+  border: 1px solid #283d2f;
+  color: #a4bea8;
+  padding: 5px 9px;
+  border-radius: 4px;
+}
+
+@media (max-width: 1024px) {
+  .pipeline-topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pipeline-columns-grid {
+    grid-template-columns: 1fr;
+  }
+  .stage-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }

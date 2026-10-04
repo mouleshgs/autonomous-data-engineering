@@ -27,3 +27,6 @@ class PipelineState(BaseModel):
     dataframe: Any = None
     stages: list[PipelineStage] = Field(default_factory=list)
     logs: list[dict[str, Any]] = Field(default_factory=list)
+    model_type: str = "generic"
+    target_column: str | None = None
+    model_benchmark: dict[str, Any] | None = None

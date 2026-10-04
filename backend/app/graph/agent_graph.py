@@ -9,8 +9,11 @@ from langgraph.graph import END, START, StateGraph
 
 from app.tools.data_tools import (
     PROCESSED_DIR,
+    clip_outliers,
     coerce_numeric_columns,
     correct_negative_values,
+    encode_categoricals,
+    evaluate_downstream_model,
     fill_missing_values,
     load_frame,
     normalize_strings,
@@ -22,6 +25,7 @@ from app.tools.data_tools import (
     remove_empty_columns,
     remove_empty_rows,
     remove_duplicates,
+    scale_features,
     standardize_dates,
     standardize_column_names,
     validate_dataframe,
@@ -44,6 +48,9 @@ class DataPipelineState(TypedDict):
     status: str
     logs: list[dict[str, Any]]
     stages: list[dict[str, Any]]
+    model_type: str
+    target_column: str | None
+    model_benchmark: dict[str, Any] | None
 
 
 def now() -> str:
@@ -86,15 +93,31 @@ def profiler_node(state: DataPipelineState) -> DataPipelineState:
 
 def planner_node(state: DataPipelineState) -> DataPipelineState:
     time.sleep(0.8)
-    state["plan"] = plan_with_llm(state["profile"])
-    _add_log(state, "Planner Agent", "Generated adaptive plan", f"Selected {len(state['plan'])} safe operations from observed issues", "plan_with_llm", output=str(state["plan"]))
-    state["stages"].append({"name": "Planner Agent", "status": "SUCCESS", "detail": f"Selected {len(state['plan'])} safe operations"})
+    model_type = state.get("model_type", "generic")
+    target_col = state.get("target_column")
+    state["plan"] = plan_with_llm(
+        state["profile"],
+        model_type=model_type,
+        target_col=target_col,
+    )
+    model_note = f" conditioned on target model '{model_type.upper()}'" if model_type != "generic" else ""
+    _add_log(
+        state,
+        "Planner Agent",
+        "Generated adaptive plan",
+        f"Selected {len(state['plan'])} operations{model_note}",
+        "plan_with_llm",
+        output=str(state["plan"]),
+    )
+    state["stages"].append({"name": "Planner Agent", "status": "SUCCESS", "detail": f"Selected {len(state['plan'])} operations{model_note}"})
     return state
 
 
 def cleaning_node(state: DataPipelineState) -> DataPipelineState:
     time.sleep(0.6)
     frame = state["dataframe"].copy()
+    target_col = state.get("target_column")
+
     for step in state["plan"]:
         op = step["operation"]
         if op == "remove_empty_rows":
@@ -131,12 +154,28 @@ def cleaning_node(state: DataPipelineState) -> DataPipelineState:
         elif op == "standardize_column_names":
             frame = standardize_column_names(frame)
             _add_log(state, "Transformation Agent", op, step["reason"], "standardize_column_names", output=str(list(frame.columns)))
+        elif op == "clip_outliers":
+            frame = clip_outliers(frame, target_col=target_col)
+            _add_log(state, "Feature Engineering Agent", op, step["reason"], "clip_outliers", output="Clipped extreme numerical outliers (1st/99th percentiles)")
+        elif op == "scale_features":
+            scale_method = step.get("method", "standard")
+            frame = scale_features(frame, method=scale_method, target_col=target_col)
+            _add_log(state, "Feature Engineering Agent", op, step["reason"], "scale_features", output=f"Applied {scale_method.upper()} scaling to numeric predictors")
+        elif op == "encode_categoricals":
+            enc_method = step.get("method", "onehot")
+            frame = encode_categoricals(frame, method=enc_method, target_col=target_col)
+            _add_log(state, "Feature Engineering Agent", op, step["reason"], "encode_categoricals", output=f"Applied {enc_method} encoding to categoricals")
         elif op == "validate":
             validation = validate_dataframe(frame)
             state["after_quality"] = validation["quality"]
             _add_log(state, "Validation Agent", op, step["reason"], "validate_dataframe", status="SUCCESS" if validation["validated"] else "WARNING", output=str(validation))
+
     state["dataframe"] = frame
-    state["stages"].append({"name": "Cleaning", "status": "SUCCESS", "detail": "; ".join(step.get("operation", "clean") for step in state["plan"] if step.get("operation") not in {"validate", "store"}) or "No clean-up steps needed"})
+    state["stages"].append({
+        "name": "Cleaning",
+        "status": "SUCCESS",
+        "detail": "; ".join(step.get("operation", "clean") for step in state["plan"] if step.get("operation") not in {"validate", "store"}) or "No clean-up steps needed",
+    })
     return state
 
 
@@ -155,6 +194,31 @@ def transformation_node(state: DataPipelineState) -> DataPipelineState:
     return state
 
 
+def benchmark_node(state: DataPipelineState) -> DataPipelineState:
+    target_col = state.get("target_column")
+    model_type = state.get("model_type", "generic")
+
+    if target_col and model_type and model_type != "generic":
+        time.sleep(0.5)
+        frame = state["dataframe"]
+        benchmark = evaluate_downstream_model(frame, target_col=target_col, model_type=model_type)
+        state["model_benchmark"] = benchmark
+        _add_log(
+            state,
+            "Model Benchmark Agent",
+            "Evaluated downstream model",
+            f"Trained {benchmark['model_name']} on target '{benchmark['target_column']}'",
+            "evaluate_downstream_model",
+            output=f"Baseline: {benchmark['baseline_score']}% | Model-Aware: {benchmark['model_aware_score']}% | Research Lift: +{benchmark['lift']}%",
+        )
+        state["stages"].append({
+            "name": "Model Benchmark",
+            "status": "SUCCESS",
+            "detail": f"{benchmark['model_name']} ({benchmark['metric_name']}): {benchmark['model_aware_score']}% (+{benchmark['lift']}% lift)",
+        })
+    return state
+
+
 def build_langgraph_pipeline():
     builder = StateGraph(DataPipelineState)
     builder.add_node("source_analyzer", source_analyzer_node)
@@ -162,16 +226,23 @@ def build_langgraph_pipeline():
     builder.add_node("planner", planner_node)
     builder.add_node("cleaning", cleaning_node)
     builder.add_node("transformation", transformation_node)
+    builder.add_node("benchmark", benchmark_node)
     builder.add_edge(START, "source_analyzer")
     builder.add_edge("source_analyzer", "profiler")
     builder.add_edge("profiler", "planner")
     builder.add_edge("planner", "cleaning")
     builder.add_edge("cleaning", "transformation")
-    builder.add_edge("transformation", END)
+    builder.add_edge("transformation", "benchmark")
+    builder.add_edge("benchmark", END)
     return builder.compile()
 
 
-def run_langgraph_pipeline(dataset_id: str, dataset: dict[str, Any]) -> dict[str, Any]:
+def run_langgraph_pipeline(
+    dataset_id: str,
+    dataset: dict[str, Any],
+    model_type: str = "generic",
+    target_column: str | None = None,
+) -> dict[str, Any]:
     initial_state: DataPipelineState = {
         "dataset_id": dataset_id,
         "dataset_name": dataset["name"],
@@ -188,6 +259,9 @@ def run_langgraph_pipeline(dataset_id: str, dataset: dict[str, Any]) -> dict[str
         "status": "PENDING",
         "logs": [],
         "stages": [],
+        "model_type": model_type or dataset.get("model_type", "generic"),
+        "target_column": target_column or dataset.get("target_column"),
+        "model_benchmark": None,
     }
     graph = build_langgraph_pipeline()
     final_state = graph.invoke(initial_state)
@@ -202,6 +276,9 @@ def run_langgraph_pipeline(dataset_id: str, dataset: dict[str, Any]) -> dict[str
         "plan": final_state["plan"],
         "stages": final_state["stages"],
         "logs": final_state["logs"],
+        "model_type": final_state.get("model_type", "generic"),
+        "target_column": final_state.get("target_column"),
+        "model_benchmark": final_state.get("model_benchmark"),
     }
     dataset.update({
         "profile": final_state["profile"],
@@ -212,5 +289,8 @@ def run_langgraph_pipeline(dataset_id: str, dataset: dict[str, Any]) -> dict[str
         "columns": len(final_state["dataframe"].columns),
         "status": "READY",
         "processed_path": final_state["processed_path"],
+        "model_type": final_state.get("model_type", "generic"),
+        "target_column": final_state.get("target_column"),
+        "model_benchmark": final_state.get("model_benchmark"),
     })
     return run

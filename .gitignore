@@ -1,5 +1,5 @@
 # =========================================================
- Autonomous Data Engineering Platform
+# Autonomous Data Engineering Platform
 # =========================================================
 
 # ---------------------------------------------------------
@@ -187,17 +187,16 @@ exports/
 *.csv
 *.xlsx
 
-# IMPORTANT:
-# If you want sample datasets tracked in Git,
-# put them in a separate directory such as:
-# data/sample/
-#
-# and add exceptions below.
-
+# Sample and Demo Datasets (Keep tracked for demonstration)
+!data/*.csv
+!testing-db/*.csv
+!testing-db/*.xlsx
 
 # ---------------------------------------------------------
 # AI / ML Generated Files
 # ---------------------------------------------------------
+.agents/
+.gemini/
 models/
 checkpoints/
 *.bin

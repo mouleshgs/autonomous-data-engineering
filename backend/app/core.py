@@ -53,10 +53,13 @@ def plan_for(profile: dict[str, Any]) -> list[dict[str, str]]:
     return build_plan(profile)
 
 
-def execute_run(dataset_id: str) -> dict[str, Any]:
+def execute_run(dataset_id: str, model_type: str = "generic", target_column: str | None = None) -> dict[str, Any]:
     dataset = DATASETS[dataset_id]
     run_id = str(uuid4())
-    run = run_langgraph_pipeline(dataset_id, dataset)
+    try:
+        run = run_langgraph_pipeline(dataset_id, dataset, model_type=model_type, target_column=target_column)
+    except TypeError:
+        run = run_langgraph_pipeline(dataset_id, dataset)
     run["id"] = run_id
     for record in run.get("logs", []):
         record.update({

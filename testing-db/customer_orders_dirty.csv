@@ -1,0 +1,13 @@
+Order ID #,Customer Full Name,Order Date,Region Code,Product Category,Item Quantity,Unit Price ($),Is Return?,Internal Notes (Empty)
+ORD-1001,  johnathan DOE ,2024/01/15,us,  electronics ,2.0,$249.99,no,
+ORD-1002,SARAH CONNOR,2024-02-18, US ,HOME & APPLIANCES,1.0,$89.50,YES,
+ORD-1003,rajesh  kumar,14-03-2024,ind,apparel & fashion,-3.0,$45.00,false,
+ORD-1004,EMMA WATSON,2024/04/05, uk ,  books & stationery ,4.0,,0,
+ORD-1005,Michael Scott,2024-05-12,ca,Office Supplies,10.0,$12.75,1,
+ORD-1005,Michael Scott,2024-05-12,ca,Office Supplies,10.0,$12.75,1,
+,,,,,,,,
+ORD-1006,fiona gallagher,06/20/2024,us,beauty & health,,$35.00,No,
+ORD-1007,  LUCAS MOURA ,2024-07-04,,,1.0,$199.00,TRUE,
+ORD-1008,priya sharma,18-08-2024,IND,Electronics,-1.0,$520.00,y,
+ORD-1009,David Attenborough,2024/09/25,uk,  outdoors & sports ,3.0,$145.50,n,
+ORD-1010,elena rostova,2024-10-31,ca,home & appliances,2.0,$75.20,yes,

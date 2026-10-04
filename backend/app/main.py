@@ -17,6 +17,10 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allo
 class Query(BaseModel):
     question: str
 
+class RunPipelineRequest(BaseModel):
+    model_type: str = "generic"
+    target_column: str | None = None
+
 @app.get("/api/health")
 def health(): return {"status": "ok", "mode": "DEMO_MODE"}
 
@@ -51,6 +55,15 @@ def profile(dataset_id: str):
     if not item: raise HTTPException(404, "Dataset not found")
     return item.get("profile", {})
 
+@app.get("/api/datasets/{dataset_id}/columns")
+def dataset_columns(dataset_id: str):
+    item = DATASETS.get(dataset_id)
+    if not item: raise HTTPException(404, "Dataset not found")
+    profile = item.get("profile", {})
+    stats = profile.get("column_stats", [])
+    cols = [c["name"] for c in stats]
+    return {"columns": cols}
+
 @app.get("/api/datasets/{dataset_id}/download")
 def download_processed_dataset(dataset_id: str):
     item = DATASETS.get(dataset_id)
@@ -62,9 +75,11 @@ def download_processed_dataset(dataset_id: str):
     return FileResponse(path, media_type="text/csv", filename=f"{Path(item['name']).stem}_processed.csv")
 
 @app.post("/api/pipelines/{dataset_id}/run")
-def run_pipeline(dataset_id: str):
+def run_pipeline(dataset_id: str, payload: RunPipelineRequest = None):
     if dataset_id not in DATASETS: raise HTTPException(404, "Dataset not found")
-    try: return execute_run(dataset_id)
+    model_type = payload.model_type if payload else "generic"
+    target_column = payload.target_column if payload else None
+    try: return execute_run(dataset_id, model_type=model_type, target_column=target_column)
     except Exception as exc: raise HTTPException(422, f"Pipeline paused: {exc}") from exc
 
 @app.get("/api/pipelines/{run_id}")

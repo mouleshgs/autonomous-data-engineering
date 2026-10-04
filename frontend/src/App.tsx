@@ -53,6 +53,9 @@ type Run = {
   after: any;
   plan: any[];
   stages: any[];
+  model_type?: string;
+  target_column?: string;
+  model_benchmark?: any;
 };
 const stages = [
   "Source Analyzer",
@@ -63,6 +66,7 @@ const stages = [
   "Transformation",
   "Validation",
   "Storage",
+  "Model Benchmark",
 ];
 
 function App() {
@@ -76,6 +80,10 @@ function App() {
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [activeStageIndex, setActiveStageIndex] = useState(0);
   const [view, setView] = useState("overview");
+  const [modelType, setModelType] = useState<string>("generic");
+  const [targetColumn, setTargetColumn] = useState<string>("");
+  const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
+
   const refresh = async () => {
     const response = await api.get("/datasets");
     setDatasets(response.data);
@@ -86,6 +94,22 @@ function App() {
   useEffect(() => {
     refresh().catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (selected) {
+      api
+        .get(`/datasets/${selected.id}/columns`)
+        .then((res) => {
+          const cols: string[] = res.data.columns || [];
+          setDatasetColumns(cols);
+          if (cols.length > 0) {
+            setTargetColumn(cols[cols.length - 1]);
+          }
+        })
+        .catch(() => undefined);
+    }
+  }, [selected?.id]);
+
   useEffect(() => {
     if (!pipelineRunning) return;
     const timer = window.setInterval(() => {
@@ -109,7 +133,10 @@ function App() {
     setActiveStageIndex(0);
     setRun(null);
     try {
-      const response = await api.post(`/pipelines/${selected.id}/run`);
+      const response = await api.post(`/pipelines/${selected.id}/run`, {
+        model_type: modelType,
+        target_column: modelType !== "generic" ? targetColumn : undefined,
+      });
       setRun(response.data);
       await refresh();
       setSelected((await api.get(`/datasets/${selected.id}`)).data);
@@ -147,9 +174,6 @@ function App() {
             <strong>ORBITAL</strong>
             <span>data intelligence</span>
           </div>
-        </div>
-        <div className="mode">
-          <span className="pulse" /> DEMO MODE <small>LOCAL</small>
         </div>
         <nav>
           {[
@@ -394,10 +418,17 @@ function App() {
           <Pipeline
             run={run}
             selected={selected}
+            setSelected={setSelected}
+            datasets={datasets}
             execute={execute}
             busy={busy}
             pipelineRunning={pipelineRunning}
             activeStageIndex={activeStageIndex}
+            modelType={modelType}
+            setModelType={setModelType}
+            targetColumn={targetColumn}
+            setTargetColumn={setTargetColumn}
+            datasetColumns={datasetColumns}
           />
         )}{" "}
         {view === "logs" && <Logs logs={logs} />}{" "}
@@ -466,7 +497,21 @@ function Empty({ onUpload }: any) {
     </label>
   );
 }
-function Pipeline({ run, selected, execute, busy, pipelineRunning, activeStageIndex }: any) {
+function Pipeline({
+  run,
+  selected,
+  setSelected,
+  datasets,
+  execute,
+  busy,
+  pipelineRunning,
+  activeStageIndex,
+  modelType,
+  setModelType,
+  targetColumn,
+  setTargetColumn,
+  datasetColumns,
+}: any) {
   const download = () => {
     if (!selected) return;
     const link = document.createElement("a");
@@ -476,94 +521,271 @@ function Pipeline({ run, selected, execute, busy, pipelineRunning, activeStageIn
     link.click();
     document.body.removeChild(link);
   };
+
+  const getPolicySummary = (type: string) => {
+    switch (type) {
+      case "random_forest":
+        return {
+          title: "TREE-BASED OPTIMIZATION POLICY (RANDOM FOREST)",
+          desc: "Scale-invariant: skips numeric scaling to preserve natural feature boundaries; applies Ordinal Encoding to categoricals to prevent sparse dimensionality explosion in tree splits.",
+        };
+      case "xgboost":
+        return {
+          title: "GRADIENT BOOSTING POLICY (XGBOOST)",
+          desc: "Iterative gradient-partitioned: preserves raw numeric continuous distributions; encodes categorical levels ordinally with native NaN-routing preservation.",
+        };
+      case "logistic_regression":
+        return {
+          title: "LINEAR HYPERPLANE POLICY (LOGISTIC / RIDGE)",
+          desc: "Requires continuous normalized feature space: applies outlier clipping (1st/99th percentiles) to neutralize high leverage points, StandardScaler (zero-mean unit-variance), and One-Hot Encoding.",
+        };
+      case "knn":
+        return {
+          title: "DISTANCE-METRIC POLICY (K-NEAREST NEIGHBORS)",
+          desc: "Euclidean/Minkowski distance sensitive: strictly applies MinMax feature normalization [0, 1] so high-magnitude columns do not dominate distance calculations.",
+        };
+      default:
+        return {
+          title: "GENERIC DATA ENGINEERING POLICY",
+          desc: "Standard automated cleaning: handles empty rows/cols, deduplication, median/mode imputation, string and date ISO standardization.",
+        };
+    }
+  };
+
+  const policy = getPolicySummary(modelType);
+
   return (
-    <section className="pipeline-view">
-      <div className="panel pipeline-card">
-        <div className="panel-head">
-          <div>
-            <span className="section-label">EXECUTION GRAPH</span>
-            <h3>{selected?.name || "Select a dataset"}</h3>
-          </div>
-          <div className="header-actions">
-            <button
-              className="run-button"
-              disabled={!selected || busy}
-              onClick={execute}
-            >
-              <Play size={15} />{" "}
-              {busy ? "Running..." : "Run autonomous pipeline"}
-            </button>
-            {selected?.status === "READY" && (
-              <button
-                className="run-button"
-                onClick={download}
-                title="Download processed CSV"
-              >
-                <Download size={15} /> Download CSV
-              </button>
+    <section className="pipeline-layout">
+      {/* 1. Full-Width Top Bar: Dataset Dropdown & Spacious Action Buttons */}
+      <div className="pipeline-topbar">
+        <div className="dataset-select-section">
+          <Database size={18} style={{ color: "#d7f36b", flexShrink: 0 }} />
+          <span className="dataset-select-label">ACTIVE DATASET:</span>
+          <select
+            className="dataset-select-dropdown"
+            value={selected?.id || ""}
+            onChange={(e) => {
+              const target = datasets.find((d: any) => d.id === e.target.value);
+              if (target) setSelected(target);
+            }}
+            disabled={busy || pipelineRunning}
+          >
+            {datasets.length === 0 ? (
+              <option value="">No datasets uploaded yet</option>
+            ) : (
+              datasets.map((d: any) => (
+                <option key={d.id} value={d.id}>
+                  {d.name} ({d.source_type} · {(d.rows || 0).toLocaleString()} rows · {d.columns} cols)
+                </option>
+              ))
             )}
-          </div>
+          </select>
         </div>
-        <div className="stage-list">
-          {stages.map((name, i) => {
-            const complete = run?.stages?.some(
-              (stage: any) =>
-                stage.name.toLowerCase() === name.toLowerCase() ||
-                stage.name
-                  .toLowerCase()
-                  .includes(name.split(" ")[0].toLowerCase()),
-            );
-            const active = pipelineRunning && i === activeStageIndex;
-            const passed = pipelineRunning && i < activeStageIndex;
-            return (
-              <div
-                className={`stage ${complete ? "complete" : ""} ${active ? "stage-active" : ""} ${passed ? "stage-passed" : ""}`}
-                key={name}
-              >
-                <div className="stage-marker">
-                  {complete ? (
-                    <CheckCircle2 size={16} />
-                  ) : active ? (
-                    <LoaderCircle className="stage-spinner" size={16} />
-                  ) : passed ? (
-                    <CheckCircle2 size={16} />
-                  ) : (
-                    <span>{String(i + 1).padStart(2, "0")}</span>
-                  )}
-                </div>
-                <div>
-                  <strong>{name}</strong>
-                  <span>
-                    {complete
-                      ? "Completed successfully"
-                      : active
-                        ? "Agent working..."
-                        : passed
-                          ? "Step complete"
-                      : "Waiting for execution"}
-                  </span>
-                </div>
-                {i < stages.length - 1 && <div className="stage-line" />}
-              </div>
-            );
-          })}
+
+        <div className="pipeline-actions">
+          <button
+            className="run-button"
+            disabled={!selected || busy}
+            onClick={execute}
+          >
+            <Play size={15} />{" "}
+            {busy ? "Running..." : "Run autonomous pipeline"}
+          </button>
+          {selected?.status === "READY" && (
+            <button
+              className="secondary-download-btn"
+              onClick={download}
+              title="Download processed CSV"
+            >
+              <Download size={15} /> Download CSV
+            </button>
+          )}
         </div>
       </div>
-      {run && (
-        <div className="panel plan-card">
-          <span className="section-label">ADAPTIVE PLAN</span>
-          <h3>Chosen from observed data issues</h3>
-          {run.plan.map((p: any) => (
-            <div className="plan-step" key={p.operation}>
-              <CheckCircle2 size={15} />
-              <div>
-                <strong>{p.operation.replaceAll("_", " ")}</strong>
-                <span>{p.reason}</span>
+
+      {/* 2. Symmetrical 50/50 Balanced Two-Column Layout */}
+      <div className="pipeline-columns-grid">
+        {/* Left Column: Model Configuration & Execution Graph Stages */}
+        <div className="pipeline-column">
+          <div className="model-config-card">
+            <span className="section-label">RESEARCH NOVELTY</span>
+            <h4 style={{ margin: "4px 0 0", fontSize: 14, color: "#d7f36b" }}>
+              Target-Model-Aware Autonomous Feature Engineering
+            </h4>
+
+            <div className="model-config-grid">
+              <div className="model-field">
+                <label>Target Machine Learning Model</label>
+                <select
+                  className="model-select"
+                  value={modelType}
+                  onChange={(e) => setModelType(e.target.value)}
+                  disabled={busy}
+                >
+                  <option value="generic">Generic Pipeline (Standard Cleaning)</option>
+                  <option value="random_forest">Random Forest (Scale-Invariant, Ordinal)</option>
+                  <option value="xgboost">Gradient Boosting / XGBoost (Tree-Splits)</option>
+                  <option value="logistic_regression">Logistic / Linear Regression (StandardScaler + Outlier Clipping)</option>
+                  <option value="knn">K-Nearest Neighbors (MinMax [0, 1] Normalization)</option>
+                </select>
+              </div>
+              {modelType !== "generic" && (
+                <div className="model-field">
+                  <label>Target Predictor / Label Column</label>
+                  <select
+                    className="model-select"
+                    value={targetColumn}
+                    onChange={(e) => setTargetColumn(e.target.value)}
+                    disabled={busy}
+                  >
+                    {datasetColumns.length === 0 ? (
+                      <option value="">(Upload dataset to load columns)</option>
+                    ) : (
+                      datasetColumns.map((col: string) => (
+                        <option key={col} value={col}>
+                          {col}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="model-policy-callout">
+              <strong>{policy.title}</strong>
+              {policy.desc}
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: "18px 22px" }}>
+            <span className="section-label">EXECUTION GRAPH</span>
+            <h3 style={{ margin: "4px 0 0", fontSize: 15 }}>Autonomous Pipeline Stages</h3>
+
+            <div className="stage-grid">
+              {stages.map((name: string, i: number) => {
+                const complete = run?.stages?.some(
+                  (stage: any) =>
+                    stage.name.toLowerCase() === name.toLowerCase() ||
+                    stage.name
+                      .toLowerCase()
+                      .includes(name.split(" ")[0].toLowerCase()),
+                );
+                const active = pipelineRunning && i === activeStageIndex;
+                const passed = pipelineRunning && i < activeStageIndex;
+                return (
+                  <div
+                    className={`stage-card ${complete ? "complete" : ""} ${active ? "stage-active" : ""}`}
+                    key={name}
+                  >
+                    <div className="stage-card-marker">
+                      {complete ? (
+                        <CheckCircle2 size={15} />
+                      ) : active ? (
+                        <LoaderCircle className="stage-spinner" size={15} />
+                      ) : passed ? (
+                        <CheckCircle2 size={15} />
+                      ) : (
+                        <span>{String(i + 1).padStart(2, "0")}</span>
+                      )}
+                    </div>
+                    <div className="stage-card-text">
+                      <strong>{name}</strong>
+                      <span>
+                        {complete
+                          ? "Completed"
+                          : active
+                            ? "Agent active..."
+                            : passed
+                              ? "Done"
+                              : "Pending"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Empirical Benchmark & Bounded Adaptive Plan (or Standby Monitor) */}
+        <div className="pipeline-column">
+          {run?.model_benchmark && (
+            <div className="panel benchmark-card">
+              <div className="benchmark-header">
+                <div>
+                  <span className="section-label">EMPIRICAL RESEARCH BENCHMARK</span>
+                  <h3 style={{ margin: "4px 0 0", color: "#e8eee8" }}>
+                    {run.model_benchmark.model_name}
+                  </h3>
+                </div>
+                <span className="benchmark-pill">
+                  +{run.model_benchmark.lift}% RESEARCH LIFT
+                </span>
+              </div>
+
+              <div className="benchmark-scores">
+                <div className="benchmark-col">
+                  <small>BASELINE SCORE</small>
+                  <strong>{run.model_benchmark.baseline_score}%</strong>
+                </div>
+                <div className="benchmark-arrow">→</div>
+                <div className="benchmark-col highlight">
+                  <small>MODEL-AWARE SCORE</small>
+                  <strong>{run.model_benchmark.model_aware_score}%</strong>
+                </div>
+              </div>
+
+              <div className="benchmark-meta">
+                <div>
+                  <b>Target Column:</b> <code>{run.model_benchmark.target_column}</code> (
+                  {run.model_benchmark.task})
+                </div>
+                <div>
+                  <b>Evaluation Metric:</b> {run.model_benchmark.metric_name}
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <b>Algorithmic Strategy:</b> {run.model_benchmark.policy_description}
+                </div>
               </div>
             </div>
-          ))}
+          )}
+
+          {run ? (
+            <div className="panel plan-card">
+              <span className="section-label">ADAPTIVE PLAN</span>
+              <h3 style={{ margin: "4px 0 12px", fontSize: 15 }}>
+                Chosen from observed data issues & target model
+              </h3>
+              <div className="plan-card-scrollable">
+                {run.plan.map((p: any) => (
+                  <div className="plan-step" key={p.operation}>
+                    <CheckCircle2 size={15} />
+                    <div>
+                      <strong>{p.operation.replaceAll("_", " ")}</strong>
+                      <span>{p.reason}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="standby-card">
+              <div className="standby-icon">
+                <Sparkles size={24} />
+              </div>
+              <h3>Pipeline Ready on Standby</h3>
+              <p>
+                Select your target machine learning model and predictor column, then launch the autonomous pipeline to observe dynamic multi-agent planning and model-aware optimizations in real time.
+              </p>
+              <div className="standby-badges">
+                <span className="standby-badge">Dynamic Heuristic Planning</span>
+                <span className="standby-badge">Model-Aware Feature Engineering</span>
+                <span className="standby-badge">Automated Empirical Benchmarking</span>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </section>
   );
 }
