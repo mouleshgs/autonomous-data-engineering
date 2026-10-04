@@ -83,6 +83,26 @@ def download_processed_dataset(dataset_id: str):
     if path.parent != PROCESSED_DIR.resolve() or not path.is_file(): raise HTTPException(404, "Processed dataset is not available")
     return FileResponse(path, media_type="text/csv", filename=f"{Path(item['name']).stem}_processed.csv")
 
+@app.delete("/api/datasets/{dataset_id}")
+def delete_dataset(dataset_id: str):
+    if dataset_id not in DATASETS:
+        raise HTTPException(404, "Dataset not found")
+    item = DATASETS.pop(dataset_id)
+    if item.get("path"):
+        try:
+            Path(item["path"]).unlink(missing_ok=True)
+        except Exception:
+            pass
+    if item.get("processed_path"):
+        try:
+            Path(item["processed_path"]).unlink(missing_ok=True)
+        except Exception:
+            pass
+    runs_to_remove = [rid for rid, r in RUNS.items() if r.get("dataset_id") == dataset_id]
+    for rid in runs_to_remove:
+        RUNS.pop(rid, None)
+    return {"status": "success", "deleted": dataset_id}
+
 @app.post("/api/pipelines/{dataset_id}/run")
 def run_pipeline(dataset_id: str, payload: RunPipelineRequest = None):
     if dataset_id not in DATASETS: raise HTTPException(404, "Dataset not found")
