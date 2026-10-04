@@ -190,16 +190,30 @@ function App() {
       const startedRun = response.data;
       setRun(startedRun);
 
+      let retries = 0;
       const pollRun = async () => {
         try {
           const latest = await api.get(`/pipelines/${startedRun.id}`);
+          retries = 0;
           setRun(latest.data);
 
-          if (latest.data.status === "SUCCESS" || latest.data.status === "FAILED") {
+          if (latest.data.status === "SUCCESS") {
             setPipelineRunning(false);
             setBusy(false);
-            await refresh();
-            setSelected((await api.get(`/datasets/${selected.id}`)).data);
+            try {
+              await refresh();
+              const updated = await api.get(`/datasets/${selected.id}`);
+              setSelected(updated.data);
+            } catch (refreshErr) {
+              console.warn("Post-pipeline refresh warning:", refreshErr);
+            }
+            return;
+          }
+
+          if (latest.data.status === "FAILED") {
+            setPipelineRunning(false);
+            setBusy(false);
+            setError(`Pipeline Failed: ${latest.data.error || "Execution failed in background worker"}`);
             return;
           }
 
@@ -208,6 +222,14 @@ function App() {
           }, 1200);
         } catch (err: any) {
           console.error("Pipeline poll error:", err);
+          if (retries < 3) {
+            retries++;
+            console.log(`Retrying poll (${retries}/3)...`);
+            window.setTimeout(() => {
+              void pollRun();
+            }, 1500);
+            return;
+          }
           setPipelineRunning(false);
           setBusy(false);
           const detail =
