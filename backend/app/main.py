@@ -117,6 +117,7 @@ def run_pipeline(dataset_id: str, payload: RunPipelineRequest = None):
         raise HTTPException(404, "Dataset not found")
     model_type = payload.model_type if payload else "generic"
     target_column = payload.target_column if payload else None
+    print(f"--> [STARTING EXECUTE_RUN] model_type={model_type}, target_column={target_column}", flush=True)
     try:
         run = execute_run(dataset_id, model_type=model_type, target_column=target_column)
         print(f"--> [PIPELINE SUCCESS] run_id={run.get('id')}", flush=True)

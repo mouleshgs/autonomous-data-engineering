@@ -56,12 +56,16 @@ def plan_for(profile: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def execute_run(dataset_id: str, model_type: str = "generic", target_column: str | None = None) -> dict[str, Any]:
+    print(f"--> [core.execute_run] fetching dataset {dataset_id}", flush=True)
     dataset = DATASETS[dataset_id]
     run_id = str(uuid4())
+    print(f"--> [core.execute_run] dataset={dataset.get('name')}, path={dataset.get('path')}", flush=True)
     try:
         run = run_langgraph_pipeline(dataset_id, dataset, model_type=model_type, target_column=target_column)
-    except TypeError:
+    except TypeError as te:
+        print(f"--> [core.execute_run] TypeError fallback: {te}", flush=True)
         run = run_langgraph_pipeline(dataset_id, dataset)
+    print(f"--> [core.execute_run] pipeline finished! status={run.get('status')}", flush=True)
     run["id"] = run_id
     for record in run.get("logs", []):
         record.update({

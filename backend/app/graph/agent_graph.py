@@ -70,10 +70,11 @@ def _add_log(state: DataPipelineState, agent: str, action: str, reason: str, too
 
 
 def _slow_stage(stage_name: str, minimum: float = 0.6, variance: float = 0.8) -> None:
-    time.sleep(0.25)
+    time.sleep(0.05)
 
 
 def source_analyzer_node(state: DataPipelineState) -> DataPipelineState:
+    print(f"--> [NODE 1: Source Analyzer] path={state.get('source_path')}", flush=True)
     _slow_stage("Source Analyzer", 0.7, 0.9)
     frame = load_frame(state["source_path"])
     state["dataframe"] = frame
@@ -90,6 +91,7 @@ def source_analyzer_node(state: DataPipelineState) -> DataPipelineState:
 
 
 def profiler_node(state: DataPipelineState) -> DataPipelineState:
+    print(f"--> [NODE 2: Profiler Agent]", flush=True)
     _slow_stage("Profiler Agent", 0.8, 1.0)
     frame = state["dataframe"]
     state["profile"] = profile_frame(frame)
@@ -105,6 +107,7 @@ def profiler_node(state: DataPipelineState) -> DataPipelineState:
 
 
 def planner_node(state: DataPipelineState) -> DataPipelineState:
+    print(f"--> [NODE 3: Planner Agent]", flush=True)
     _slow_stage("Planner Agent", 1.0, 1.2)
     model_type = state.get("model_type", "generic")
     target_col = state.get("target_column")
@@ -131,6 +134,7 @@ def planner_node(state: DataPipelineState) -> DataPipelineState:
 
 
 def cleaning_node(state: DataPipelineState) -> DataPipelineState:
+    print(f"--> [NODE 4: Cleaning Agent] steps={len(state.get('plan', []))}", flush=True)
     _slow_stage("Cleaning Agent", 0.9, 1.1)
     frame = state["dataframe"].copy()
     target_col = state.get("target_column")
@@ -202,6 +206,7 @@ def cleaning_node(state: DataPipelineState) -> DataPipelineState:
 
 
 def transformation_node(state: DataPipelineState) -> DataPipelineState:
+    print(f"--> [NODE 5: Transformation Agent]", flush=True)
     _slow_stage("Transformation Agent", 0.9, 1.0)
     frame = state["dataframe"]
     state["after_quality"] = quality(frame)
@@ -240,6 +245,7 @@ def _infer_target_column(frame: Any, supplied_target: str | None = None) -> str 
 
 
 def benchmark_node(state: DataPipelineState) -> DataPipelineState:
+    print(f"--> [NODE 6: Benchmark Agent]", flush=True)
     model_type = state.get("model_type", "generic")
     target_col = _infer_target_column(state["dataframe"], state.get("target_column")) if state.get("dataframe") is not None else state.get("target_column")
     state["target_column"] = target_col
@@ -328,8 +334,11 @@ def run_langgraph_pipeline(
         "target_column": target_column or dataset.get("target_column"),
         "model_benchmark": None,
     }
+    print(f"--> [run_langgraph_pipeline] compiling graph", flush=True)
     graph = build_langgraph_pipeline()
+    print(f"--> [run_langgraph_pipeline] invoking graph...", flush=True)
     final_state = graph.invoke(initial_state)
+    print(f"--> [run_langgraph_pipeline] invoke completed! status={final_state.get('status')}", flush=True)
     run = {
         "id": f"run-{dataset_id}",
         "dataset_id": dataset_id,
