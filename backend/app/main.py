@@ -11,8 +11,17 @@ from pydantic import BaseModel
 
 from .core import DATASETS, LOGS, PROCESSED_DIR, RUNS, UPLOAD_DIR, execute_run, load_frame, now, profile_frame
 
+import os
+
 app = FastAPI(title="Autonomous Data Engineering Platform", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins if cors_origins != ["*"] else ["*"],
+    allow_credentials=True if cors_origins != ["*"] else False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class Query(BaseModel):
     question: str
