@@ -614,6 +614,8 @@ function App() {
             ask={ask}
             answer={answer}
             busy={busy}
+            selected={selected}
+            run={run}
           />
         )}
       </main>
@@ -921,31 +923,6 @@ function Pipeline({
                 <p className="active-agent-desc">{STAGE_METADATA[activeStageIndex].detail}</p>
               </div>
             )}
-
-            {/* Step-by-Step Flow Nodes */}
-            <div className="stage-timeline">
-              {STAGE_METADATA.map((stageItem: any, i: number) => {
-                const isComplete = (!pipelineRunning && run?.status === "SUCCESS") || (pipelineRunning && i < activeStageIndex);
-                const isActive = pipelineRunning && i === activeStageIndex;
-                return (
-                  <div
-                    className={`timeline-node ${isComplete ? "done" : ""} ${isActive ? "active" : ""}`}
-                    key={stageItem.name}
-                  >
-                    <span className="timeline-dot">
-                      {isComplete ? (
-                        <CheckCircle2 size={12} />
-                      ) : isActive ? (
-                        <LoaderCircle className="stage-spinner" size={12} />
-                      ) : (
-                        <span>{i + 1}</span>
-                      )}
-                    </span>
-                    <small>{stageItem.name}</small>
-                  </div>
-                );
-              })}
-            </div>
 
             {/* 3x3 Symmetrical Agent Cards with Glowing Transitions */}
             <div className="stage-grid">
@@ -1259,13 +1236,18 @@ function Benchmark({ run, selected }: any) {
   );
 }
 
-function Analytics({ question, setQuestion, ask, answer, busy }: any) {
+function Analytics({ question, setQuestion, ask, answer, busy, selected, run }: any) {
+  const stats = selected?.profile?.column_stats || [];
+  const numCol = stats.find((c: any) => c.dtype?.includes("int") || c.dtype?.includes("float"))?.name;
+  const catCol = stats.find((c: any) => c.dtype?.includes("obj") || c.dtype?.includes("str"))?.name;
+
   const suggestions = [
     "Show top 5 rows",
     "Total record and column count",
-    "Average of numeric columns",
-    "Highest value records",
-    "Show bottom 5 rows",
+    numCol && catCol ? `Highest ${numCol} by ${catCol}` : "Average of numeric columns",
+    numCol ? `Average of ${numCol}` : "Highest value records",
+    "What transformations were performed?",
+    "Why was outlier clipping applied?",
   ];
 
   return (
@@ -1273,14 +1255,14 @@ function Analytics({ question, setQuestion, ask, answer, busy }: any) {
       <div className="analytics-header-card">
         <div className="analytics-intro">
           <span className="kicker">
-            NATURAL LANGUAGE WAREHOUSE INTELLIGENCE <i />
+            HYBRID SQL + GROUNDED RAG INTELLIGENCE <i />
           </span>
           <h2>
             Ask the <em>warehouse.</em>
           </h2>
           <p>
-            Query clean structured datasets and pipeline lineage using natural language.
-            Generates grounded SQL execution and evidence tables in real-time.
+            Natural language interface grounded in real SQLite warehouse execution and multi-agent pipeline lineage.
+            Eliminates hallucinations with verified SQL queries, schema profiles, and evidence tables.
           </p>
         </div>
       </div>

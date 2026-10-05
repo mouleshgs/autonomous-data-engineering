@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,9 +56,22 @@ def init_datasets_from_disk():
                 df = load_frame(file_path)
                 processed_candidate = PROCESSED_DIR / f"{dataset_id}.csv"
                 is_processed = processed_candidate.exists()
+                clean_name = file_path.name
+                if re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}", file_path.stem):
+                    cols_str = " ".join(str(c).lower() for c in df.columns)
+                    if "order" in cols_str or "customer" in cols_str:
+                        clean_name = "customer_orders.csv"
+                    elif "sale" in cols_str or "revenue" in cols_str:
+                        clean_name = "sales_data.csv"
+                    elif "patient" in cols_str or "admission" in cols_str:
+                        clean_name = "hospital_admissions.csv"
+                    elif "laptop" in cols_str:
+                        clean_name = "laptop_specs.csv"
+                    else:
+                        clean_name = "ecommerce_orders.csv"
                 item = {
                     "id": dataset_id,
-                    "name": file_path.name,
+                    "name": clean_name,
                     "source_type": file_path.suffix[1:].upper(),
                     "path": str(file_path),
                     "rows": len(df),
