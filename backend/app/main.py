@@ -158,30 +158,35 @@ def analytics(query: Query):
     question = (query.question or "").strip()
     normalized = question.lower()
     frames = []
+    dataset_name = "dataset"
+
     for item in DATASETS.values():
-        processed_path = item.get("processed_path")
-        if not processed_path:
+        path_str = item.get("processed_path") or item.get("path")
+        if not path_str:
             continue
-        path = Path(processed_path)
+        path = Path(path_str)
         if path.exists():
             try:
                 frames.append(load_frame(path))
+                dataset_name = item.get("name", "dataset")
             except Exception:
                 continue
+
     if not frames:
         return {
             "route": "HYBRID_SQL_RAG",
-            "answer": "Run a pipeline first so there is processed data to query.",
-            "sql": "SELECT * FROM processed_dataset LIMIT 0",
+            "answer": "Run a pipeline or upload a dataset first so there is data to query.",
+            "sql": "SELECT * FROM processed_dataset LIMIT 0;",
             "evidence": [],
-            "sources": [{"kind": "system", "title": "No processed dataset", "snippet": "No processed dataset is available yet."}],
+            "sources": [{"kind": "system", "title": "No dataset available", "snippet": "No processed dataset is available yet."}],
         }
 
     df = frames[-1].copy()
     numeric_cols = list(df.select_dtypes(include="number").columns)
     dim_cols = [col for col in df.columns if col not in numeric_cols]
+    table_name = re.sub(r"[^\w]", "_", dataset_name.split(".")[0]) or "processed_dataset"
     column_map = {str(col).lower(): col for col in df.columns}
-    group_col = next((column_map[name] for name in ["region", "country", "category", "segment", "product", "status", "channel", "department", "customer"] if name in column_map), None)
+    group_col = next((column_map[name] for name in ["region", "country", "category", "segment", "product", "status", "channel", "department", "customer", "company"] if name in column_map), dim_cols[0] if dim_cols else None)
 
     def to_jsonable(value):
         if value is None:
@@ -213,31 +218,33 @@ def analytics(query: Query):
     ]
 
     def find_column_search(question_text: str):
+        q_norm = question_text.lower().replace("_", " ")
         for col in df.columns:
             col_lower = str(col).lower().replace("_", " ")
-            if col_lower not in question_text:
-                continue
             patterns = [
-                rf"(?:for|about|with)\s+(.+?)\s+(?:in|on|by|from|of)\s+{re.escape(col_lower)}",
-                rf"(?:in|on)\s+{re.escape(col_lower)}\s+(?:column|field)?\s*(?:for|contains?|includes?|equals?|=)?\s+(.+?)(?:\s+(?:and|or|but|$))",
-                rf"{re.escape(col_lower)}\s+(?:contains?|includes?|has|=)\s+(.+?)(?:\s+(?:and|or|but|$))",
+                rf"in\s+{re.escape(col_lower)}\s+column\s+for\s+['\"]?([^'\"]+?)['\"]?(?:\s+column)?$",
+                rf"in\s+{re.escape(col_lower)}\s+for\s+['\"]?([^'\"]+?)['\"]?$",
+                rf"for\s+['\"]?([^'\"]+?)['\"]?\s+in\s+{re.escape(col_lower)}(?:\s+column)?",
+                rf"where\s+{re.escape(col_lower)}\s+(?:is|equals|=)\s+['\"]?([^'\"]+?)['\"]?",
+                rf"filter\s+by\s+{re.escape(col_lower)}\s+(?:is|to|=)?\s*['\"]?([^'\"]+?)['\"]?",
             ]
             for pattern in patterns:
-                match = re.search(pattern, question_text)
+                match = re.search(pattern, q_norm)
                 if match:
                     value = match.group(1).strip().strip("'\"")
                     if value and value not in {"column", "field", "attribute"}:
                         return col, value
-            if any(token in question_text for token in ["search", "find", "lookup", "filter", "show", "where"]):
+            if any(token in q_norm for token in ["search", "find", "lookup", "filter", "show", "where"]):
                 for token in ["for", "about", "with", "on"]:
-                    if f"{token} " in question_text:
-                        remainder = question_text.split(f"{token} ", 1)[1]
+                    if f"{token} " in q_norm:
+                        remainder = q_norm.split(f"{token} ", 1)[1]
                         if f" {col_lower}" in remainder:
                             value = remainder.split(f" {col_lower}", 1)[0].strip()
                             if value:
                                 return col, value
         return None, None
 
+    # 1. Search by column value
     search_column, search_value = find_column_search(normalized)
     if search_column and search_value:
         search_series = df[str(search_column)].astype(str).str.contains(re.escape(search_value), case=False, na=False)
@@ -247,7 +254,7 @@ def analytics(query: Query):
         limit = min(len(filtered), 10)
         evidence = filtered.head(limit).fillna("").to_dict(orient="records")
         answer = f"I found {len(filtered):,} matching rows where {search_column} contains \"{search_value}\"."
-        sql = f"SELECT * FROM processed_dataset WHERE {search_column} LIKE '%{search_value}%' LIMIT {limit}"
+        sql = f"SELECT * FROM {table_name} WHERE {search_column} LIKE '%{search_value}%' LIMIT {limit};"
         return {
             "route": "HYBRID_SQL_RAG",
             "answer": f"{answer} This is a direct column-level search using the dataset's structured values and the related RAG context.",
@@ -257,24 +264,9 @@ def analytics(query: Query):
             "sources": rag_context,
         }
 
-    if "record" in normalized and ("top" in normalized or "latest" in normalized or "first" in normalized or "show" in normalized or "head" in normalized):
-        match = re.search(r"\b(\d+)\b", normalized)
-        limit = int(match.group(1)) if match else 5
-        limit = min(max(limit, 1), 20)
-        rows = df.head(limit).fillna("").to_dict(orient="records")
-        return {
-            "route": "HYBRID_SQL_RAG",
-            "answer": f"Here are the top {limit} records in the dataset.",
-            "sql": f"SELECT * FROM processed_dataset LIMIT {limit}",
-            "evidence": [to_jsonable(item) for item in rows],
-            "columns": list(df.columns),
-            "sources": rag_context,
-        }
-
-    if any(token in normalized for token in ["highest", "largest", "max", "most"]) or any(token in normalized for token in ["lowest", "smallest", "minimum", "least"]):
-        metric = next((candidate for candidate in numeric_cols if str(candidate).lower().replace("_", " ") in normalized or any(token in normalized for token in [str(candidate).lower(), str(candidate).lower().replace("_", " ")]) ), None)
-        if metric is None and numeric_cols:
-            metric = numeric_cols[0]
+    # 2. Grouped comparisons / aggregations (e.g. Which region had the highest total revenue?)
+    if (any(token in normalized for token in ["highest", "largest", "max", "maximum", "peak", "most"]) or any(token in normalized for token in ["lowest", "smallest", "minimum", "least"])) and (group_col and (str(group_col).lower() in normalized or any(term in normalized for term in ["which", "by", "per", "grouped", "each"]))):
+        metric = next((candidate for candidate in numeric_cols if str(candidate).lower().replace("_", " ") in normalized or any(token in normalized for token in [str(candidate).lower(), str(candidate).lower().replace("_", " ")])), numeric_cols[0] if numeric_cols else None)
         if group_col and metric:
             grouped = df.groupby(group_col, dropna=False)[metric].sum(numeric_only=True).reset_index()
             if any(token in normalized for token in ["lowest", "smallest", "minimum", "least"]):
@@ -283,23 +275,57 @@ def analytics(query: Query):
             else:
                 row = grouped.nlargest(1, metric).iloc[0]
                 answer = f"{row[group_col]} had the highest total {metric} at {float(row[metric]):,.2f}."
-            sql = f"SELECT {group_col}, SUM({metric}) AS total_{metric} FROM processed_dataset GROUP BY {group_col} ORDER BY total_{metric} DESC LIMIT 5"
+            sql = f"SELECT {group_col}, SUM({metric}) AS total_{metric} FROM {table_name} GROUP BY {group_col} ORDER BY total_{metric} DESC LIMIT 5;"
             evidence = grouped.head(5).to_dict(orient="records")
             return {
                 "route": "HYBRID_SQL_RAG",
-                "answer": f"{answer} This fits the platform's SQL analytics pattern for grouped comparisons and is consistent with the project’s autonomous pipeline style.",
+                "answer": f"{answer} This fits the platform's SQL analytics pattern for grouped comparisons and is consistent with the project's autonomous pipeline style.",
                 "sql": sql,
                 "evidence": [to_jsonable(item) for item in evidence],
                 "columns": list(grouped.columns),
                 "sources": rag_context,
             }
 
+    # 3. Bottom N records / Tail / Last rows
+    if any(token in normalized for token in ["bottom", "last", "tail"]):
+        match = re.search(r"\b(\d+)\b", normalized)
+        limit = int(match.group(1)) if match else 5
+        limit = min(max(limit, 1), 50)
+        rows = df.tail(limit).fillna("").to_dict(orient="records")
+        return {
+            "route": "HYBRID_SQL_RAG",
+            "answer": f"Retrieved bottom {limit} records from '{dataset_name}'.",
+            "sql": f"SELECT * FROM {table_name} ORDER BY _rowid_ DESC LIMIT {limit};",
+            "evidence": [to_jsonable(item) for item in rows],
+            "columns": list(df.columns),
+            "sources": rag_context,
+        }
+
+    # 4. Top N records / Preview / Head
+    if ("record" in normalized and any(t in normalized for t in ["top", "latest", "first", "show", "head"])) or ("show" in normalized and any(t in normalized for t in ["row", "record", "preview"])) or any(t in normalized for t in ["top 5", "top 10", "head rows", "first 5"]):
+        match = re.search(r"\b(\d+)\b", normalized)
+        limit = int(match.group(1)) if match else 5
+        limit = min(max(limit, 1), 50)
+        rows = df.head(limit).fillna("").to_dict(orient="records")
+        return {
+            "route": "HYBRID_SQL_RAG",
+            "answer": f"Here are the top {limit} records in the dataset '{dataset_name}'.",
+            "sql": f"SELECT * FROM {table_name} LIMIT {limit};",
+            "evidence": [to_jsonable(item) for item in rows],
+            "columns": list(df.columns),
+            "sources": rag_context,
+        }
+
+    # 5. Highest / Maximum / Lowest / Minimum single value
+    if any(token in normalized for token in ["highest", "largest", "max", "maximum", "peak", "most"]) or any(token in normalized for token in ["lowest", "smallest", "minimum", "least"]):
+        metric = next((candidate for candidate in numeric_cols if str(candidate).lower().replace("_", " ") in normalized or any(token in normalized for token in [str(candidate).lower(), str(candidate).lower().replace("_", " ")])), numeric_cols[0] if numeric_cols else None)
         if metric:
-            series = df[metric]
-            best = float(series.min()) if any(token in normalized for token in ["lowest", "smallest", "minimum", "least"]) else float(series.max())
-            answer = f"The {'minimum' if any(token in normalized for token in ['lowest', 'smallest', 'minimum', 'least']) else 'maximum'} {metric} is {best:,.2f}."
-            sql = f"SELECT * FROM processed_dataset ORDER BY {metric} {'ASC' if any(token in normalized for token in ['lowest', 'smallest', 'minimum', 'least']) else 'DESC'} LIMIT 1"
-            evidence = [to_jsonable(df.loc[series.idxmin() if any(token in normalized for token in ['lowest', 'smallest', 'minimum', 'least']) else series.idxmax()].to_dict())]
+            is_min = any(token in normalized for token in ["lowest", "smallest", "minimum", "least"])
+            sorted_df = df.sort_values(by=metric, ascending=is_min).head(5)
+            best = float(sorted_df[metric].iloc[0])
+            answer = f"The {'minimum' if is_min else 'maximum'} {metric} is {best:,.2f}."
+            sql = f"SELECT * FROM {table_name} ORDER BY {metric} {'ASC' if is_min else 'DESC'} LIMIT 5;"
+            evidence = [to_jsonable(sorted_df.iloc[0].to_dict())]
             return {
                 "route": "HYBRID_SQL_RAG",
                 "answer": f"{answer} This answer is backed by the structured dataset and also matches the RAG interpretation of the data pipeline workflow.",
@@ -309,42 +335,70 @@ def analytics(query: Query):
                 "sources": rag_context,
             }
 
-    if any(token in normalized for token in ["average", "avg", "mean"]):
-        metric = next((candidate for candidate in numeric_cols if str(candidate).lower().replace("_", " ") in normalized), numeric_cols[0] if numeric_cols else None)
+    # 6. Average of numeric columns / Summary statistics
+    if any(token in normalized for token in ["average", "avg", "mean", "numeric", "summary", "statistic"]):
+        metric = next((candidate for candidate in numeric_cols if str(candidate).lower().replace("_", " ") in normalized), None)
         if metric:
             avg = float(df[metric].mean())
             answer = f"The average {metric} is {avg:,.2f}."
-            sql = f"SELECT AVG({metric}) AS avg_{metric} FROM processed_dataset"
+            sql = f"SELECT AVG({metric}) AS avg_{metric} FROM {table_name};"
             evidence = [{"metric": metric, "average_value": avg}]
             return {
                 "route": "HYBRID_SQL_RAG",
-                "answer": f"{answer} The project’s RAG context confirms this is the standard aggregate metric produced by the autonomous profiling pipeline.",
+                "answer": f"{answer} The project's RAG context confirms this is the standard aggregate metric produced by the autonomous profiling pipeline.",
                 "sql": sql,
                 "evidence": [to_jsonable(item) for item in evidence],
                 "columns": list(evidence[0].keys()) if evidence else [],
                 "sources": rag_context,
             }
+        elif numeric_cols:
+            summary_rows = []
+            for col in numeric_cols:
+                series = df[col].dropna()
+                if not series.empty:
+                    summary_rows.append({
+                        "metric_column": col,
+                        "average_mean": round(float(series.mean()), 2),
+                        "minimum_value": round(float(series.min()), 2),
+                        "maximum_value": round(float(series.max()), 2),
+                        "median_value": round(float(series.median()), 2),
+                    })
+            cols_sql = ", ".join([f"AVG({col}) AS avg_{col}" for col in numeric_cols[:4]])
+            return {
+                "route": "HYBRID_SQL_RAG",
+                "answer": f"Computed average and distribution metrics across {len(numeric_cols)} numeric fields in '{dataset_name}'.",
+                "sql": f"SELECT {cols_sql} FROM {table_name};",
+                "evidence": [to_jsonable(item) for item in summary_rows],
+                "columns": ["metric_column", "average_mean", "minimum_value", "maximum_value", "median_value"],
+                "sources": rag_context,
+            }
 
-    if any(token in normalized for token in ["count", "how many", "number of rows", "total records", "size"]):
-        answer = f"The processed dataset contains {len(df):,} rows across {len(df.columns)} columns."
-        sql = "SELECT COUNT(*) AS row_count FROM processed_dataset"
-        evidence = [{"row_count": len(df), "column_count": len(df.columns)}]
+    # 7. Total count / Total records and columns / Size
+    if any(token in normalized for token in ["count", "how many", "number of rows", "total record", "total row", "size", "rows and column"]):
+        evidence = [{
+            "dataset_name": dataset_name,
+            "total_rows": len(df),
+            "total_columns": len(df.columns),
+            "numeric_columns_count": len(numeric_cols),
+            "dimension_columns_count": len(dim_cols),
+        }]
         return {
             "route": "HYBRID_SQL_RAG",
-            "answer": f"{answer} This is a direct SQL summary, and the supporting RAG context describes the same pipeline lifecycle.",
-            "sql": sql,
+            "answer": f"The processed dataset contains {len(df):,} rows across {len(df.columns)} columns.",
+            "sql": f"SELECT COUNT(*) AS total_rows, {len(df.columns)} AS total_columns FROM {table_name};",
             "evidence": [to_jsonable(item) for item in evidence],
-            "columns": list(evidence[0].keys()) if evidence else [],
+            "columns": list(evidence[0].keys()),
             "sources": rag_context,
         }
 
+    # 8. Fallback default: show top 5 records with dataset overview
     numeric_summary = ", ".join(str(col) for col in numeric_cols[:5]) if numeric_cols else "no numeric metrics"
-    answer = f"I found {len(df):,} processed records across {len(df.columns)} columns. Numeric fields available include: {numeric_summary}."
-    evidence = df.head(8).fillna("").to_dict(orient="records")
+    answer = f"I found {len(df):,} processed records across {len(df.columns)} columns in '{dataset_name}'. Showing top 5 rows below:"
+    evidence = df.head(5).fillna("").to_dict(orient="records")
     return {
         "route": "HYBRID_SQL_RAG",
-        "answer": f"{answer} This response combines the SQL-derived structure with the operational knowledge from the autonomous data engineering workflow.",
-        "sql": "SELECT * FROM processed_dataset LIMIT 8",
+        "answer": f"{answer} Numeric fields available include: {numeric_summary}.",
+        "sql": f"SELECT * FROM {table_name} LIMIT 5;",
         "evidence": [to_jsonable(item) for item in evidence],
         "columns": list(df.columns),
         "sources": rag_context,

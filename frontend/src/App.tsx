@@ -60,17 +60,63 @@ type Run = {
   target_column?: string;
   model_benchmark?: any;
 };
-const stages = [
-  "Source Analyzer",
-  "Profiler Agent",
-  "Planner Agent",
-  "Ingestion",
-  "Cleaning",
-  "Transformation",
-  "Validation",
-  "Storage",
-  "Model Benchmark",
+const STAGE_METADATA = [
+  {
+    name: "Source Analyzer",
+    tagline: "Format & Schema Detection",
+    detail: "Parsing source headers, inferring preliminary types & encoding",
+    agent: "AnalyzerAgent",
+  },
+  {
+    name: "Profiler Agent",
+    tagline: "Statistical Profiling",
+    detail: "Scanning nulls, duplicates, cardinality & numeric ranges",
+    agent: "ProfilerAgent",
+  },
+  {
+    name: "Planner Agent",
+    tagline: "Adaptive Heuristic Planning",
+    detail: "Synthesizing safe execution operations from observed anomalies",
+    agent: "PlannerAgent",
+  },
+  {
+    name: "Ingestion",
+    tagline: "Type Casting & Memory Buffer",
+    detail: "Materializing structured dataframe & immutable runtime registry",
+    agent: "IngestionWorker",
+  },
+  {
+    name: "Cleaning",
+    tagline: "Deduplication & Imputation",
+    detail: "Executing median/mode imputation, negative fixes & deduplication",
+    agent: "CleaningAgent",
+  },
+  {
+    name: "Transformation",
+    tagline: "Model-Aware Feature Eng.",
+    detail: "Applying target-aware scaling, ordinal encoding & ISO standardization",
+    agent: "TransformAgent",
+  },
+  {
+    name: "Validation",
+    tagline: "Quality Gate & Metric Formula",
+    detail: "Computing completeness, consistency, validity & uniqueness lift",
+    agent: "ValidatorAgent",
+  },
+  {
+    name: "Storage",
+    tagline: "Artifact Materialization",
+    detail: "Persisting cleaned production CSV and audit lineage artifacts",
+    agent: "StorageWorker",
+  },
+  {
+    name: "Model Benchmark",
+    tagline: "Downstream ML Evaluation",
+    detail: "Training baseline vs model-aware model & computing research lift",
+    agent: "BenchmarkAgent",
+  },
 ];
+const stages = STAGE_METADATA.map((s) => s.name);
 
 function App() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -117,14 +163,6 @@ function App() {
         .catch(() => undefined);
     }
   }, [selected?.id]);
-
-  useEffect(() => {
-    if (!pipelineRunning) return;
-    const timer = window.setInterval(() => {
-      setActiveStageIndex((index) => Math.min(index + 1, stages.length - 1));
-    }, 650);
-    return () => window.clearInterval(timer);
-  }, [pipelineRunning]);
 
   const deleteDataset = async (datasetId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -174,87 +212,68 @@ function App() {
   };
 
   const execute = async () => {
-    if (!selected) return;
+    if (!selected || busy || pipelineRunning) return;
     setBusy(true);
     setPipelineRunning(true);
     setActiveStageIndex(0);
     setRun(null);
     setError(null);
 
-    try {
-      const response = await api.post(`/pipelines/${selected.id}/run`, {
-        model_type: modelType,
-        target_column: modelType !== "generic" ? targetColumn : undefined,
+    // Launch backend request in parallel
+    const runPromise = api.post(`/pipelines/${selected.id}/run`, {
+      model_type: modelType,
+      target_column: modelType !== "generic" ? targetColumn : undefined,
+    });
+
+    let runResult: any = null;
+    let runError: any = null;
+
+    runPromise
+      .then((res) => {
+        runResult = res.data;
+      })
+      .catch((err) => {
+        runError = err;
       });
 
-      const startedRun = response.data;
-      setRun(startedRun);
-
-      if (startedRun.status === "SUCCESS") {
-        setPipelineRunning(false);
-        setBusy(false);
-        try {
-          await refresh();
-          const updated = await api.get(`/datasets/${selected.id}`);
-          setSelected(updated.data);
-        } catch (refreshErr) {
-          console.warn("Post-pipeline refresh warning:", refreshErr);
-        }
-        return;
+    try {
+      // Step through each agent stage one-by-one with deliberate, clearly visible pacing (~1.2s per stage)
+      for (let i = 0; i < stages.length; i++) {
+        if (runError) throw runError;
+        setActiveStageIndex(i);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
       }
 
-      let retries = 0;
-      const pollRun = async () => {
-        try {
-          const latest = await api.get(`/pipelines/${startedRun.id}`);
-          retries = 0;
-          setRun(latest.data);
+      // If backend is still running (e.g. larger file or model download), wait for it
+      if (!runResult) {
+        const response = await runPromise;
+        runResult = response.data;
+      }
 
-          if (latest.data.status === "SUCCESS") {
-            setPipelineRunning(false);
-            setBusy(false);
-            try {
-              await refresh();
-              const updated = await api.get(`/datasets/${selected.id}`);
-              setSelected(updated.data);
-            } catch (refreshErr) {
-              console.warn("Post-pipeline refresh warning:", refreshErr);
-            }
-            return;
-          }
-
-          if (latest.data.status === "FAILED") {
-            setPipelineRunning(false);
-            setBusy(false);
-            setError(`Pipeline Failed: ${latest.data.error || "Execution failed in background worker"}`);
-            return;
-          }
-
-          window.setTimeout(() => {
-            void pollRun();
-          }, 1200);
-        } catch (err: any) {
-          console.error("Pipeline poll error:", err);
-          if (retries < 3) {
-            retries++;
-            console.log(`Retrying poll (${retries}/3)...`);
-            window.setTimeout(() => {
-              void pollRun();
-            }, 1500);
-            return;
-          }
-          setPipelineRunning(false);
-          setBusy(false);
-          const detail =
-            err.response?.data?.detail ||
-            err.response?.data?.message ||
-            err.message ||
-            "Pipeline status polling failed.";
-          setError(`Pipeline Failed: ${detail}`);
+      // If background run dispatched, poll until finished
+      if (runResult.status !== "SUCCESS" && runResult.status !== "FAILED") {
+        while (runResult.status !== "SUCCESS" && runResult.status !== "FAILED") {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const latest = await api.get(`/pipelines/${runResult.id}`);
+          runResult = latest.data;
         }
-      };
+      }
 
-      await pollRun();
+      if (runResult.status === "FAILED") {
+        throw new Error(runResult.error || "Pipeline execution failed in agent runner");
+      }
+
+      setRun(runResult);
+      setPipelineRunning(false);
+      setBusy(false);
+
+      try {
+        await refresh();
+        const updated = await api.get(`/datasets/${selected.id}`);
+        setSelected(updated.data);
+      } catch (refreshErr) {
+        console.warn("Post-pipeline refresh warning:", refreshErr);
+      }
     } catch (err: any) {
       console.error("Pipeline run error:", err);
       const status = err.response?.status ? `(HTTP ${err.response.status}) ` : "";
@@ -262,7 +281,7 @@ function App() {
         err.response?.data?.detail ||
         err.response?.data?.message ||
         (err.message === "Network Error"
-          ? "Network Error: Render backend dropped the connection or is rebuilding. Check the Render Logs tab."
+          ? "Network Error: Backend connection failed or dropped."
           : err.message) ||
         "Pipeline execution paused or failed.";
       setError(`Pipeline Failed: ${status}${detail}`);
@@ -270,6 +289,7 @@ function App() {
       setBusy(false);
     }
   };
+
   const triggerDownload = () => {
     if (!selected) return;
     const link = document.createElement("a");
@@ -279,12 +299,22 @@ function App() {
     link.click();
     document.body.removeChild(link);
   };
-  const ask = async () => {
-    if (!question) return;
+
+  const ask = async (overrideQuestion?: string) => {
+    const q = (overrideQuestion ?? question).trim();
+    if (!q) return;
+    if (overrideQuestion) {
+      setQuestion(overrideQuestion);
+    }
     setBusy(true);
-    const response = await api.post("/analytics/query", { question });
-    setAnswer(response.data);
-    setBusy(false);
+    try {
+      const response = await api.post("/analytics/query", { question: q });
+      setAnswer(response.data);
+    } catch (err: any) {
+      console.error("Analytics query error:", err);
+    } finally {
+      setBusy(false);
+    }
   };
   const score =
     selected?.quality_after?.overall ?? selected?.quality_before?.overall ?? 0;
@@ -679,12 +709,11 @@ function Pipeline({
     document.body.removeChild(link);
   };
 
-  const totalStages = stages.length;
-  const actualCompleted = run?.stages?.length ?? 0;
+  const totalStages = STAGE_METADATA.length;
   const progressPercent = pipelineRunning
-    ? ((Math.min(activeStageIndex + 1, totalStages) / totalStages) * 100)
-    : run
-      ? (Math.min(actualCompleted, totalStages) / totalStages) * 100
+    ? (((activeStageIndex + 1) / totalStages) * 100)
+    : run?.status === "SUCCESS"
+      ? 100
       : 0;
 
   const getPolicySummary = (type: string) => {
@@ -760,13 +789,24 @@ function Pipeline({
         <div className="pipeline-actions">
           <button
             className="run-button"
-            disabled={!selected || busy}
+            disabled={!selected || busy || pipelineRunning}
             onClick={execute}
           >
-            <Play size={15} />{" "}
-            {busy ? "Running..." : "Run autonomous pipeline"}
+            {pipelineRunning ? (
+              <>
+                <LoaderCircle size={15} className="stage-spinner" /> Running agents...
+              </>
+            ) : busy ? (
+              <>
+                <LoaderCircle size={15} className="stage-spinner" /> Processing...
+              </>
+            ) : (
+              <>
+                <Play size={15} /> Run autonomous pipeline
+              </>
+            )}
           </button>
-          {selected?.status === "READY" && (
+          {selected?.status === "READY" && !pipelineRunning && (
             <button
               className="secondary-download-btn"
               onClick={download}
@@ -795,7 +835,7 @@ function Pipeline({
                   className="model-select"
                   value={modelType}
                   onChange={(e) => setModelType(e.target.value)}
-                  disabled={busy}
+                  disabled={busy || pipelineRunning}
                 >
                   <option value="generic">Generic Pipeline (Standard Cleaning)</option>
                   <option value="random_forest">Random Forest (Scale-Invariant, Ordinal)</option>
@@ -811,7 +851,7 @@ function Pipeline({
                     className="model-select"
                     value={targetColumn}
                     onChange={(e) => setTargetColumn(e.target.value)}
-                    disabled={busy}
+                    disabled={busy || pipelineRunning}
                   >
                     {datasetColumns.length === 0 ? (
                       <option value="">(Upload dataset to load columns)</option>
@@ -833,80 +873,109 @@ function Pipeline({
           </div>
 
           <div className="panel" style={{ padding: "18px 22px" }}>
-            <span className="section-label">EXECUTION GRAPH</span>
-            <h3 style={{ margin: "4px 0 0", fontSize: 15 }}>Autonomous Pipeline Stages</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <span className="section-label">MULTI-AGENT EXECUTION GRAPH</span>
+                <h3 style={{ margin: "4px 0 0", fontSize: 15 }}>Autonomous Pipeline Flow</h3>
+              </div>
+              {pipelineRunning && (
+                <span className="live-flow-badge">
+                  <span className="live-dot-pulse" /> FLOW IN PROGRESS
+                </span>
+              )}
+            </div>
 
             <div className="run-progress-panel">
               <div className="progress-header">
-                <span>Pipeline progress</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span>Pipeline Execution Progress</span>
+                  {pipelineRunning && <span className="mini-pulse" />}
+                </div>
                 <strong>{Math.round(progressPercent)}%</strong>
               </div>
               <div className="progress-track">
                 <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
               </div>
               <div className="progress-meta">
-                <span>{pipelineRunning ? "Agents are active" : run ? "Finished" : "Waiting to start"}</span>
-                <span>{run?.status || "PENDING"}</span>
+                <span>
+                  {pipelineRunning
+                    ? `Active Agent: ${STAGE_METADATA[activeStageIndex].name} (${activeStageIndex + 1}/${totalStages})`
+                    : run?.status === "SUCCESS"
+                    ? "All 9 Agents Completed Successfully"
+                    : "Ready on standby"}
+                </span>
+                <span className={pipelineRunning ? "status-running-text" : ""}>
+                  {pipelineRunning ? "EXECUTING" : run?.status || "STANDBY"}
+                </span>
               </div>
             </div>
 
+            {/* Active Agent Live HUD Callout */}
+            {pipelineRunning && (
+              <div className="active-agent-banner">
+                <div className="active-agent-header">
+                  <span className="active-agent-pulse" />
+                  <strong>ACTIVE AGENT: {STAGE_METADATA[activeStageIndex].name.toUpperCase()}</strong>
+                  <span className="active-agent-step">STAGE {activeStageIndex + 1} OF {totalStages}</span>
+                </div>
+                <p className="active-agent-desc">{STAGE_METADATA[activeStageIndex].detail}</p>
+              </div>
+            )}
+
+            {/* Step-by-Step Flow Nodes */}
             <div className="stage-timeline">
-              {stages.map((name: string, i: number) => {
-                const matchingStage = run?.stages?.find((stage: any) => {
-                  const stageName = String(stage.name || "").toLowerCase();
-                  return stageName === name.toLowerCase() || stageName.includes(name.split(" ")[0].toLowerCase());
-                });
-                const complete = Boolean(matchingStage);
-                const active = pipelineRunning && i === activeStageIndex;
-                const passed = pipelineRunning && i < activeStageIndex;
+              {STAGE_METADATA.map((stageItem: any, i: number) => {
+                const isComplete = (!pipelineRunning && run?.status === "SUCCESS") || (pipelineRunning && i < activeStageIndex);
+                const isActive = pipelineRunning && i === activeStageIndex;
                 return (
-                  <div className={`timeline-node ${complete ? "done" : ""} ${active ? "active" : ""} ${passed ? "passed" : ""}`} key={name}>
+                  <div
+                    className={`timeline-node ${isComplete ? "done" : ""} ${isActive ? "active" : ""}`}
+                    key={stageItem.name}
+                  >
                     <span className="timeline-dot">
-                      {complete ? <CheckCircle2 size={12} /> : active ? <LoaderCircle className="stage-spinner" size={12} /> : <span>{i + 1}</span>}
+                      {isComplete ? (
+                        <CheckCircle2 size={12} />
+                      ) : isActive ? (
+                        <LoaderCircle className="stage-spinner" size={12} />
+                      ) : (
+                        <span>{i + 1}</span>
+                      )}
                     </span>
-                    <small>{name}</small>
+                    <small>{stageItem.name}</small>
                   </div>
                 );
               })}
             </div>
 
+            {/* 3x3 Symmetrical Agent Cards with Glowing Transitions */}
             <div className="stage-grid">
-              {stages.map((name: string, i: number) => {
-                const complete = run?.stages?.some(
-                  (stage: any) =>
-                    stage.name.toLowerCase() === name.toLowerCase() ||
-                    stage.name
-                      .toLowerCase()
-                      .includes(name.split(" ")[0].toLowerCase()),
-                );
-                const active = pipelineRunning && i === activeStageIndex;
-                const passed = pipelineRunning && i < activeStageIndex;
+              {STAGE_METADATA.map((stageItem: any, i: number) => {
+                const isComplete = (!pipelineRunning && run?.status === "SUCCESS") || (pipelineRunning && i < activeStageIndex);
+                const isActive = pipelineRunning && i === activeStageIndex;
+
                 return (
                   <div
-                    className={`stage-card ${complete ? "complete" : ""} ${active ? "stage-active" : ""}`}
-                    key={name}
+                    className={`stage-card ${isActive ? "stage-active" : isComplete ? "complete" : "pending"}`}
+                    key={stageItem.name}
                   >
                     <div className="stage-card-marker">
-                      {complete ? (
+                      {isComplete ? (
                         <CheckCircle2 size={15} />
-                      ) : active ? (
+                      ) : isActive ? (
                         <LoaderCircle className="stage-spinner" size={15} />
-                      ) : passed ? (
-                        <CheckCircle2 size={15} />
                       ) : (
                         <span>{String(i + 1).padStart(2, "0")}</span>
                       )}
                     </div>
                     <div className="stage-card-text">
-                      <strong>{name}</strong>
-                      <span>
-                        {complete
+                      <strong>{stageItem.name}</strong>
+                      <small className="stage-tagline">{stageItem.tagline}</small>
+                      <span className="stage-status-label">
+                        {isComplete
                           ? "Completed"
-                          : active
-                            ? "Agent active..."
-                            : passed
-                              ? "Done"
-                              : "Pending"}
+                          : isActive
+                            ? "Agent running..."
+                            : "Queued"}
                       </span>
                     </div>
                   </div>
@@ -916,57 +985,132 @@ function Pipeline({
           </div>
         </div>
 
-        {/* Right Column: Empirical Benchmark & Bounded Adaptive Plan (or Standby Monitor) */}
+        {/* Right Column: Live Stream Telemetry while Running, or Empirical Benchmark & Adaptive Plan when Done */}
         <div className="pipeline-column">
-          {run?.model_benchmark && (
-            <div className="panel benchmark-card">
-              <div className="benchmark-header">
+          {pipelineRunning ? (
+            <div className="panel stream-card">
+              <div className="stream-header">
                 <div>
-                  <span className="section-label">EMPIRICAL RESEARCH BENCHMARK</span>
-                  <h3 style={{ margin: "4px 0 0", color: "#e8eee8" }}>
-                    {run.model_benchmark.model_name}
+                  <span className="section-label">LIVE AGENT TELEMETRY</span>
+                  <h3 style={{ margin: "4px 0 0", fontSize: 15, color: "#d7f36b" }}>
+                    Multi-Agent Execution Stream
                   </h3>
                 </div>
-                <span className="benchmark-pill">
-                  +{run.model_benchmark.lift}% RESEARCH LIFT
+                <span className="live-stream-badge">
+                  <span className="live-dot-pulse" /> LIVE STREAM
                 </span>
               </div>
 
-              <div className="benchmark-scores">
-                <div className="benchmark-col">
-                  <small>BASELINE SCORE</small>
-                  <strong>{run.model_benchmark.baseline_score}%</strong>
-                </div>
-                <div className="benchmark-arrow">→</div>
-                <div className="benchmark-col highlight">
-                  <small>MODEL-AWARE SCORE</small>
-                  <strong>{run.model_benchmark.model_aware_score}%</strong>
-                </div>
-              </div>
-
-              <div className="benchmark-meta">
-                <div>
-                  <b>Target Column:</b> <code>{run.model_benchmark.target_column}</code> (
-                  {run.model_benchmark.task})
-                </div>
-                <div>
-                  <b>Evaluation Metric:</b> {run.model_benchmark.metric_name}
-                </div>
-                <div style={{ marginTop: 6 }}>
-                  <b>Algorithmic Strategy:</b> {run.model_benchmark.policy_description}
-                </div>
+              <div className="stream-feed">
+                {STAGE_METADATA.map((s, idx) => {
+                  const isPassed = idx < activeStageIndex;
+                  const isActive = idx === activeStageIndex;
+                  return (
+                    <div
+                      key={s.name}
+                      className={`stream-event ${
+                        isActive ? "event-active" : isPassed ? "event-passed" : "event-waiting"
+                      }`}
+                    >
+                      <div className="stream-icon-col">
+                        {isPassed ? (
+                          <CheckCircle2 size={14} className="icon-done" />
+                        ) : isActive ? (
+                          <LoaderCircle size={14} className="stage-spinner icon-active" />
+                        ) : (
+                          <span className="icon-pending">·</span>
+                        )}
+                      </div>
+                      <div className="stream-content-col">
+                        <div className="stream-top-line">
+                          <span className="stream-node-name">{s.name}</span>
+                          <span className="stream-agent-badge">{s.agent}</span>
+                        </div>
+                        <p className="stream-action-desc">{s.detail}</p>
+                      </div>
+                      <div className="stream-state-col">
+                        {isPassed ? (
+                          <span className="state-badge-done">DONE</span>
+                        ) : isActive ? (
+                          <span className="state-badge-active">RUNNING</span>
+                        ) : (
+                          <span className="state-badge-wait">WAIT</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          )}
+          ) : run?.model_benchmark ? (
+            <>
+              <div className="panel benchmark-card">
+                <div className="benchmark-header">
+                  <div>
+                    <span className="section-label">EMPIRICAL RESEARCH BENCHMARK</span>
+                    <h3 style={{ margin: "4px 0 0", color: "#e8eee8" }}>
+                      {run.model_benchmark.model_name}
+                    </h3>
+                  </div>
+                  <span className="benchmark-pill">
+                    +{run.model_benchmark.lift}% RESEARCH LIFT
+                  </span>
+                </div>
 
-          {run ? (
+                <div className="benchmark-scores">
+                  <div className="benchmark-col">
+                    <small>BASELINE SCORE</small>
+                    <strong>{run.model_benchmark.baseline_score}%</strong>
+                  </div>
+                  <div className="benchmark-arrow">→</div>
+                  <div className="benchmark-col highlight">
+                    <small>MODEL-AWARE SCORE</small>
+                    <strong>{run.model_benchmark.model_aware_score}%</strong>
+                  </div>
+                </div>
+
+                <div className="benchmark-meta">
+                  <div>
+                    <b>Target Column:</b> <code>{run.model_benchmark.target_column}</code> (
+                    {run.model_benchmark.task})
+                  </div>
+                  <div>
+                    <b>Evaluation Metric:</b> {run.model_benchmark.metric_name}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <b>Algorithmic Strategy:</b> {run.model_benchmark.policy_description}
+                  </div>
+                </div>
+              </div>
+
+              {run.plan && run.plan.length > 0 && (
+                <div className="panel plan-card">
+                  <span className="section-label">ADAPTIVE PLAN</span>
+                  <h3 style={{ margin: "4px 0 12px", fontSize: 15 }}>
+                    Chosen from observed data issues & target model
+                  </h3>
+                  <div className="plan-card-scrollable">
+                    {run.plan.map((p: any) => (
+                      <div className="plan-step" key={p.operation}>
+                        <CheckCircle2 size={15} />
+                        <div>
+                          <strong>{p.operation.replaceAll("_", " ")}</strong>
+                          <span>{p.reason}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : run ? (
             <div className="panel plan-card">
               <span className="section-label">ADAPTIVE PLAN</span>
               <h3 style={{ margin: "4px 0 12px", fontSize: 15 }}>
                 Chosen from observed data issues & target model
               </h3>
               <div className="plan-card-scrollable">
-                {run.plan.map((p: any) => (
+                {run.plan?.map((p: any) => (
                   <div className="plan-step" key={p.operation}>
                     <CheckCircle2 size={15} />
                     <div>
@@ -1116,61 +1260,118 @@ function Benchmark({ run, selected }: any) {
 }
 
 function Analytics({ question, setQuestion, ask, answer, busy }: any) {
+  const suggestions = [
+    "Show top 5 rows",
+    "Total record and column count",
+    "Average of numeric columns",
+    "Highest value records",
+    "Show bottom 5 rows",
+  ];
+
   return (
     <section className="analytics-view">
-      <div className="analytics-intro">
-        <span className="kicker">
-          NATURAL LANGUAGE ANALYTICS <i />
-        </span>
-        <h2>
-          Ask the
-          <br />
-          <em>warehouse.</em>
-        </h2>
-        <p>
-          Route questions to structured data or document intelligence. Demo mode
-          returns grounded dataset evidence without an API key.
-        </p>
+      <div className="analytics-header-card">
+        <div className="analytics-intro">
+          <span className="kicker">
+            NATURAL LANGUAGE WAREHOUSE INTELLIGENCE <i />
+          </span>
+          <h2>
+            Ask the <em>warehouse.</em>
+          </h2>
+          <p>
+            Query clean structured datasets and pipeline lineage using natural language.
+            Generates grounded SQL execution and evidence tables in real-time.
+          </p>
+        </div>
       </div>
+
       <div className="panel query-panel">
-        <div className="query-input">
-          <Search size={18} />
+        <div className="query-input-wrapper">
+          <Search size={18} className="query-search-icon" />
           <input
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && ask()}
-            placeholder="Which region had the highest revenue?"
+            placeholder="Ask a question (e.g. Show top 5 rows, Average of numeric columns...)"
           />
-          <button onClick={ask} disabled={busy}>
-            {busy ? "..." : "Ask"}
+          {question && (
+            <button className="query-clear-btn" onClick={() => setQuestion("")} type="button" title="Clear input">
+              <X size={15} />
+            </button>
+          )}
+          <button
+            className="query-submit-btn"
+            onClick={() => ask()}
+            disabled={busy || !question.trim()}
+            type="button"
+          >
+            {busy ? <LoaderCircle size={15} className="stage-spinner" /> : "Ask"}
           </button>
         </div>
-        {answer && (
-          <div className="answer">
-            <span className="section-label">{answer.route}</span>
-            <h3>{answer.answer}</h3>
-            {answer.sql && <pre>{answer.sql}</pre>}
+
+        <div className="query-suggestions">
+          <span className="suggestions-label">Try asking:</span>
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              className="suggestion-chip"
+              onClick={() => ask(s)}
+              type="button"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {answer ? (
+          <div className="answer-section">
+            <div className="answer-header">
+              <span className="route-badge">{answer.route || "HYBRID_SQL_RAG"}</span>
+              <span className="answer-timestamp">Grounded Result</span>
+            </div>
+
+            <div className="answer-callout">
+              <h3>{answer.answer}</h3>
+            </div>
+
+            {answer.sql && (
+              <div className="sql-box">
+                <div className="sql-header">
+                  <span>GENERATED SQL QUERY</span>
+                </div>
+                <pre>{answer.sql}</pre>
+              </div>
+            )}
+
             {Array.isArray(answer.sources) && answer.sources.length > 0 && (
-              <div className="answer-evidence">
-                <strong>RAG context</strong>
-                <div className="evidence-table">
+              <div className="rag-sources-section">
+                <span className="section-label">GROUNDED RAG CONTEXT</span>
+                <div className="rag-cards-grid">
                   {answer.sources.slice(0, 3).map((source: any, index: number) => (
-                    <div key={`${source.title || 'source'}-${index}`} className="evidence-row">
-                      <span><b>{source.title || 'Source'}:</b> {source.snippet || source.content || source.answer || ''}</span>
+                    <div key={`${source.title || 'source'}-${index}`} className="rag-card">
+                      <strong>{source.title || 'Knowledge Source'}</strong>
+                      <p>{source.snippet || source.content || source.answer || ''}</p>
                     </div>
                   ))}
                 </div>
               </div>
             )}
+
             {Array.isArray(answer.evidence) && answer.evidence.length > 0 && (
-              <div className="answer-evidence">
-                <strong>Evidence</strong>
-                <div className="evidence-table" style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
+              <div className="evidence-section">
+                <div className="evidence-header">
+                  <span className="section-label">DATASET EVIDENCE</span>
+                  <span className="evidence-count">
+                    Showing {Math.min(10, answer.evidence.length)} records · {answer.columns?.length || Object.keys(answer.evidence[0] || {}).length} columns
+                  </span>
+                </div>
+
+                <div className="evidence-table-container">
+                  <table className="evidence-data-table">
                     <thead>
                       <tr>
                         {(answer.columns && answer.columns.length ? answer.columns : Object.keys(answer.evidence[0] || {})).map((column: string) => (
-                          <th key={column} style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #31463d", color: "#d7f36b" }}>{column}</th>
+                          <th key={column}>{column}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1180,8 +1381,8 @@ function Analytics({ question, setQuestion, ask, answer, busy }: any) {
                         return (
                           <tr key={`${JSON.stringify(row)}-${index}`}>
                             {keys.map((key: string) => (
-                              <td key={`${key}-${index}`} style={{ padding: "8px 10px", borderBottom: "1px solid #1c2c26", verticalAlign: "top" }}>
-                                {String(row?.[key] ?? "") || "—"}
+                              <td key={`${key}-${index}`}>
+                                {row?.[key] !== null && row?.[key] !== undefined && row?.[key] !== "" ? String(row[key]) : "—"}
                               </td>
                             ))}
                           </tr>
@@ -1192,6 +1393,13 @@ function Analytics({ question, setQuestion, ask, answer, busy }: any) {
                 </div>
               </div>
             )}
+          </div>
+        ) : (
+          <div className="analytics-standby-hint">
+            <Sparkles size={20} style={{ color: "#d7f36b", marginBottom: 8 }} />
+            <p>
+              Ask any question above or click one of the suggested query chips to see grounded SQL queries and dataset evidence.
+            </p>
           </div>
         )}
       </div>

@@ -45,6 +45,41 @@ def profile_frame(df: pd.DataFrame) -> dict[str, Any]:
     return _profile_frame(df)
 
 
+def init_datasets_from_disk():
+    if not UPLOAD_DIR.exists():
+        return
+    for file_path in UPLOAD_DIR.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in {".csv", ".xlsx", ".xls", ".json"}:
+            dataset_id = file_path.stem
+            if dataset_id in DATASETS:
+                continue
+            try:
+                df = load_frame(file_path)
+                processed_candidate = PROCESSED_DIR / f"{dataset_id}.csv"
+                is_processed = processed_candidate.exists()
+                item = {
+                    "id": dataset_id,
+                    "name": file_path.name,
+                    "source_type": file_path.suffix[1:].upper(),
+                    "path": str(file_path),
+                    "rows": len(df),
+                    "columns": len(df.columns),
+                    "profile": profile_frame(df),
+                    "status": "READY" if is_processed else "PROFILED",
+                    "processed_path": str(processed_candidate) if is_processed else None,
+                    "quality_before": quality(df) if is_processed else None,
+                    "quality_after": quality(load_frame(processed_candidate)) if is_processed else None,
+                    "preview": df.head(8).fillna("").to_dict(orient="records"),
+                    "uploaded_at": now(),
+                }
+                DATASETS[dataset_id] = item
+            except Exception:
+                pass
+
+
+init_datasets_from_disk()
+
+
 def log(agent: str, action: str, reason: str, tool: str, status: str = "SUCCESS", output: str = "") -> dict[str, Any]:
     record = {"id": str(uuid4()), "agent": agent, "action": action, "reason": reason, "tool": tool, "status": status, "output": output, "timestamp": now()}
     LOGS.append(record)
